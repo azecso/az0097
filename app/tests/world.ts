@@ -5,11 +5,13 @@ const imp = async (p: string) => import(p);
 
 export interface World {
   env: TestEnv; owner: Session; acct: Session; R: Record<string, any>;
-  ids: { main: string; partner: string; cashIQD: string; cashUSD: string; supplier: string };
+  ids: { main: string; partner: string; cashIQD: string; cashUSD: string; custody: string; supplier: string; customer: string };
   api: (s: Session, h: H, o?: Parameters<typeof call>[1]) => ReturnType<typeof call>;
   mkProduct: (code: string, extra?: Record<string, unknown>) => Promise<string>;
   inject: <T>(fn: (tx: any, actor: any, libs: { postJournal: any; consumeFifo: any; receiveLot: any }) => Promise<T>) => Promise<T>;
   tb: () => Promise<any>; recon: () => Promise<any>;
+  sale: (o: { product: string; qty: string; price: string; type?: "CASH" | "CREDIT"; date?: string; customer?: string; currency?: string; rate?: string; discount?: string; lineDiscount?: string; mode?: "WITH_INVOICE" | "SEPARATE"; locationId?: string; cash?: string; session?: Session; noPost?: boolean }) => Promise<any>;
+  getInvoice: (id: string) => Promise<any>;
   buy: (o: { product: string; qty: string; price: string; date?: string; type?: "CASH" | "CREDIT"; currency?: string; rate?: string; uom?: string; locationId?: string; session?: Session }) => Promise<any>;
 }
 
@@ -42,6 +44,28 @@ export async function makeWorld(): Promise<World> {
   R.recon = (await imp("@/app/api/reports/inventory-reconciliation/route")).GET;
   R.statement = (await imp("@/app/api/contacts/[id]/statement/route")).GET;
   R.fx = (await imp("@/app/api/fx-rates/route")).POST;
+  R.invoices = await imp("@/app/api/sales-invoices/route");
+  R.invoiceId = await imp("@/app/api/sales-invoices/[id]/route");
+  R.invoicePost = (await imp("@/app/api/sales-invoices/[id]/post/route")).POST;
+  R.invoiceReverse = (await imp("@/app/api/sales-invoices/[id]/reverse/route")).POST;
+  R.deliveries = await imp("@/app/api/delivery-notes/route");
+  R.deliveryPost = (await imp("@/app/api/delivery-notes/[id]/post/route")).POST;
+  R.deliveryReverse = (await imp("@/app/api/delivery-notes/[id]/reverse/route")).POST;
+  R.sreturns = await imp("@/app/api/sales-returns/route");
+  R.sreturnPost = (await imp("@/app/api/sales-returns/[id]/post/route")).POST;
+  R.sreturnReverse = (await imp("@/app/api/sales-returns/[id]/reverse/route")).POST;
+  R.quotes = await imp("@/app/api/sales-quotes/route");
+  R.quoteId = await imp("@/app/api/sales-quotes/[id]/route");
+  R.quoteIssue = (await imp("@/app/api/sales-quotes/[id]/issue/route")).POST;
+  R.quoteStatus = (await imp("@/app/api/sales-quotes/[id]/status/route")).POST;
+  R.quoteConvert = (await imp("@/app/api/sales-quotes/[id]/convert/route")).POST;
+  R.receipts = await imp("@/app/api/customer-receipts/route");
+  R.receiptPost = (await imp("@/app/api/customer-receipts/[id]/post/route")).POST;
+  R.receiptReverse = (await imp("@/app/api/customer-receipts/[id]/reverse/route")).POST;
+  R.ctransfers = await imp("@/app/api/cash-transfers/route");
+  R.ctransferPost = (await imp("@/app/api/cash-transfers/[id]/post/route")).POST;
+  R.custStatement = (await imp("@/app/api/customers/[id]/statement/route")).GET;
+  R.receivables = (await imp("@/app/api/reports/receivables/route")).GET;
   R.lots = (await imp("@/app/api/products/[id]/lots/route")).GET;
   const owner = await loginAs(R.login, "owner", OWNER_PW);
   await call(R.users.POST, { method: "POST", session: owner, body: { username: "acc", displayName: "المحاسب", password: ACCT_PW } });
@@ -50,7 +74,9 @@ export async function makeWorld(): Promise<World> {
   const locs = (await api(owner, R.locations)).body, cash = (await api(owner, R.cash)).body;
   const sup = await api(owner, R.contacts.POST, { method: "POST", body: { kind: "SUPPLIER", code: "S1", name: "مورد الاختبار" } });
   const ids = { main: locs.find((l: any) => l.kind === "MAIN").id, partner: locs.find((l: any) => l.kind === "PARTNER_CUSTODY").id,
-    cashIQD: cash.find((c: any) => c.currency === "IQD" && c.kind === "MAIN_CASH").id, cashUSD: cash.find((c: any) => c.currency === "USD").id, supplier: sup.body.id };
+    cashIQD: cash.find((c: any) => c.currency === "IQD" && c.kind === "MAIN_CASH").id, cashUSD: cash.find((c: any) => c.currency === "USD").id, custody: cash.find((c: any) => c.kind === "PARTNER_CUSTODY").id, supplier: sup.body.id, customer: "" };
+  const cus = await api(owner, R.contacts.POST, { method: "POST", body: { kind: "CUSTOMER", code: "C1", name: "عميل الاختبار" } });
+  ids.customer = cus.body.id;
   await api(owner, R.fx, { method: "POST", body: { currency: "USD", rateDate: "2026-01-01", rate: "1450" } });
   const mkProduct: World["mkProduct"] = async (code, extra = {}) => {
     const r = await api(owner, R.products.POST, { method: "POST", body: { code, name: "مادة " + code, baseUom: "قطعة", qtyDecimals: 0, ...extra } });
@@ -70,7 +96,16 @@ export async function makeWorld(): Promise<World> {
     const p = await api(s, R.purchasePost, { method: "POST", params: { id: c.body.id } });
     return { ...p, id: c.body.id };
   };
-  return { env, owner, acct, R, ids, api, mkProduct, inject, buy,
+  const sale: World["sale"] = async (o) => {
+    const s = o.session ?? owner, type = o.type ?? "CREDIT";
+    const c = await api(s, R.invoices.POST, { method: "POST", body: { customerId: o.customer ?? ids.customer, docDate: o.date ?? "2026-03-01", saleType: type, currency: o.currency ?? "IQD", exchangeRate: o.rate,
+      cashAccountId: type === "CASH" ? (o.cash ?? (o.currency === "USD" ? ids.cashUSD : ids.cashIQD)) : undefined, discount: o.discount ?? "0", deliveryMode: o.mode ?? "WITH_INVOICE",
+      lines: [{ productId: o.product, uom: "قطعة", qty: o.qty, unitPrice: o.price, lineDiscount: o.lineDiscount ?? "0", locationId: o.locationId }] } });
+    if (c.status !== 200 || o.noPost) return c;
+    const p = await api(s, R.invoicePost, { method: "POST", params: { id: c.body.id } });
+    return { ...p, id: c.body.id };
+  };
+  return { env, owner, acct, R, ids, api, mkProduct, inject, buy, sale, getInvoice: async (id: string) => (await api(owner, R.invoiceId.GET, { params: { id } })).body,
     tb: async () => (await api(owner, R.trial)).body, recon: async () => (await api(owner, R.recon)).body };
 }
 export async function capital(w: World, amount = "10000000") {

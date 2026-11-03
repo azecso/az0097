@@ -8,7 +8,7 @@ import { can, MeCtx, type Me } from "@/components/me";
 
 const NAV = [
   { href: "/", label: "لوحة التحكم" },
-  { href: "/purchases", label: "المشتريات", perm: "purchase:view" }, { href: "/contacts", label: "العملاء والموردون", perm: "contacts:view" },
+  { href: "/sales", label: "المبيعات", perm: "sales:view" }, { href: "/purchases", label: "المشتريات", perm: "purchase:view" }, { href: "/cash", label: "النقدية والعهدة", perm: "voucher:view" }, { href: "/contacts", label: "العملاء والموردون", perm: "contacts:view" },
   { href: "/inventory/products", label: "المواد", perm: "products:view" }, { href: "/inventory/stock", label: "المخزون", perm: "products:view" },
   { href: "/inventory/transfers", label: "تحويل المخزون", perm: "stock_transfer:view" }, { href: "/inventory/counts", label: "الجرد", perm: "inventory_count:view" },
   { href: "/accounting", label: "المحاسبة", perm: "journal:view" },

@@ -121,3 +121,42 @@ export async function inventoryAccountOf(tx: Tx, locationId: string): Promise<st
   if (!r) throw conflict("LOCATION_NOT_FOUND");
   return r.kind === "MAIN" ? "1300" : "1310";
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Sales-return restock: stock goes back into the EXACT layers the delivery consumed, at their original cost.
+// stock_lot_returns remembers how much of each (layer, delivery line) was already put back, only counting POSTED returns.
+// ---------------------------------------------------------------------------------------------------------------
+export async function restoreForReturn(tx: Tx, companyId: string, a: { salesLineId: string; qtyBase: Decimal.Value; returnId: string; at: Date | string }): Promise<{ cost: Decimal; byLocation: Map<string, Decimal> }> {
+  const cons = await tx`
+    SELECT c.lot_id, c.doc_line_id, c.qty::text AS qty, c.cost_base::text AS cost, l.product_id, l.location_id,
+           COALESCE((SELECT sum(r.qty) FROM stock_lot_returns r JOIN sales_returns sr ON sr.id = r.return_id WHERE r.lot_id = c.lot_id AND r.delivery_line_id = c.doc_line_id AND sr.status = 'POSTED'), 0)::text AS rq,
+           COALESCE((SELECT sum(r.cost_base) FROM stock_lot_returns r JOIN sales_returns sr ON sr.id = r.return_id WHERE r.lot_id = c.lot_id AND r.delivery_line_id = c.doc_line_id AND sr.status = 'POSTED'), 0)::text AS rc
+    FROM stock_lot_consumptions c JOIN stock_lots l ON l.id = c.lot_id
+    WHERE c.doc_type = 'delivery_note' AND c.doc_line_id IN (SELECT dl.id FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id WHERE dl.sales_line_id = ${a.salesLineId} AND dn.status = 'POSTED')
+    ORDER BY c.created_at DESC, c.id DESC FOR UPDATE OF l`;
+  let need = d(a.qtyBase), total = d(0); const byLocation = new Map<string, Decimal>();
+  for (const c of cons) {
+    if (need.lte(0)) break;
+    const avail = d(c.qty).minus(c.rq);
+    if (avail.lte(0)) continue;
+    const take = Decimal.min(need, avail);
+    const cost = take.eq(avail) ? d(c.cost).minus(c.rc) : Decimal.min(roundMoney(d(c.cost).mul(take).div(c.qty), "IQD"), d(c.cost).minus(c.rc));
+    await tx`UPDATE stock_lots SET qty_remaining = qty_remaining + ${take.toString()}, cost_remaining_base = cost_remaining_base + ${cost.toString()} WHERE id = ${c.lot_id}`;
+    await tx`INSERT INTO stock_lot_returns(company_id, lot_id, delivery_line_id, return_id, qty, cost_base) VALUES (${companyId}, ${c.lot_id}, ${c.doc_line_id}, ${a.returnId}, ${take.toString()}, ${cost.toString()})`;
+    await movement(tx, companyId, { productId: c.product_id, locationId: c.location_id, lotId: c.lot_id, type: "SALE_RETURN_IN", qty: take, cost, docType: "sales_return", docId: a.returnId, at: a.at });
+    total = total.plus(cost); byLocation.set(c.location_id, (byLocation.get(c.location_id) ?? d(0)).plus(cost)); need = need.minus(take);
+  }
+  if (need.gt(0)) throw conflict("RETURN_EXCEEDS_DELIVERED", "الكمية المرتجعة تتجاوز ما سُلّم");
+  return { cost: total, byLocation };
+}
+
+/** Takes a return's restocked quantities back out (only if still on hand), for reversing a sales return. */
+export async function undoReturnRestock(tx: Tx, companyId: string, returnId: string, at: Date | string) {
+  const rs = await tx`SELECT r.lot_id, r.qty::text AS qty, r.cost_base::text AS cost, l.product_id, l.location_id, l.qty_remaining::text AS rem
+                      FROM stock_lot_returns r JOIN stock_lots l ON l.id = r.lot_id WHERE r.return_id = ${returnId} FOR UPDATE OF l`;
+  for (const r of rs) if (d(r.rem).lt(r.qty)) throw conflict("RETURNED_STOCK_ALREADY_MOVED", "البضاعة المرتجعة بيعت أو نُقلت لاحقاً؛ اعكس تلك الحركات أولاً");
+  for (const r of rs) {
+    await tx`UPDATE stock_lots SET qty_remaining = qty_remaining - ${r.qty}, cost_remaining_base = cost_remaining_base - ${r.cost} WHERE id = ${r.lot_id}`;
+    await movement(tx, companyId, { productId: r.product_id, locationId: r.location_id, lotId: r.lot_id, type: "REVERSAL", qty: d(r.qty).neg(), cost: d(r.cost).neg(), docType: "sales_return", docId: returnId, at });
+  }
+}

@@ -27,10 +27,10 @@ export default function Contacts() {
     <MsgBox msg={msg} />{err && <div className="msg err">{err}</div>}
     <div className="card cards-as-list" style={{ marginTop: 12 }}><table><thead><tr><th>الكود</th><th>الاسم</th><th>النوع</th><th>أيام السداد</th><th></th></tr></thead>
       <tbody>{data.map((c) => <tr key={c.id}><td><span className="num">{c.code}</span></td><td>{c.name}</td><td>{KIND[c.kind]}</td><td><span className="num">{c.paymentTermsDays}</span></td>
-        <td>{c.kind !== "CUSTOMER" && <button onClick={() => api<Stmt>(`/api/contacts/${c.id}/statement`).then(setStmt)}>كشف الحساب</button>}</td></tr>)}
+        <td><button onClick={() => api<Stmt>(c.kind === "SUPPLIER" ? `/api/contacts/${c.id}/statement` : `/api/customers/${c.id}/statement`).then((x) => setStmt({ ...x, supplier: (x as any).supplier ?? (x as any).customer }))}>كشف الحساب</button></td></tr>)}
         {data.length === 0 && <tr><td colSpan={5}>لا توجد جهات بعد</td></tr>}</tbody></table></div>
     {stmt && <div className="card" style={{ marginTop: 12 }}><h2>كشف حساب: {stmt.supplier.name}</h2>
-      <p>الرصيد المستحق للمورد: <strong className="num">{money(stmt.balance)}</strong> IQD</p>
+      <p>الرصيد (موجب = مستحق للمورد / على العميل): <strong className="num">{money(stmt.balance)}</strong> IQD</p>
       <table><thead><tr><th>التاريخ</th><th>القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead>
         <tbody>{stmt.lines.map((l, i) => <tr key={i}><td><span className="num">{l.date}</span></td><td><span className="num">{l.entryNo}</span></td><td>{l.memo}</td><td><span className="num">{money(l.debit)}</span></td><td><span className="num">{money(l.credit)}</span></td><td><span className="num">{money(l.balance)}</span></td></tr>)}</tbody></table></div>}
   </>);

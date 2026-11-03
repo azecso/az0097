@@ -62,3 +62,30 @@ export const journalList = (tx: Tx, limit = 100) => tx`
     (SELECT json_agg(json_build_object('account', a.code, 'name', a.name, 'debit', jl.debit_base::text, 'credit', jl.credit_base::text) ORDER BY jl.line_no)
      FROM journal_lines jl JOIN accounts a ON a.id = jl.account_id WHERE jl.entry_id = je.id) AS lines
   FROM journal_entries je ORDER BY je.posted_at DESC, je.entry_no DESC LIMIT ${limit}`;
+
+// ---------------------------- receivables ----------------------------
+/** Customer balance: + = customer owes us (1200), minus any unapplied credit we owe them (2400). */
+export async function customerStatement(tx: Tx, customerId: string) {
+  const [c] = await tx`SELECT id, code, name, credit_limit::text AS "creditLimit" FROM contacts WHERE id = ${customerId}`;
+  if (!c) throw notFound();
+  const lines = await tx`SELECT je.entry_date::text AS date, je.entry_no AS "entryNo", je.source_doc_type AS "docType", je.memo, a.code AS account, jl.currency, jl.amount_orig::text AS "amountOrig",
+      jl.debit_base::text AS debit, jl.credit_base::text AS credit
+    FROM journal_lines jl JOIN journal_entries je ON je.id = jl.entry_id JOIN accounts a ON a.id = jl.account_id
+    WHERE jl.contact_id = ${customerId} AND a.code IN ('1200','2400') ORDER BY je.entry_date, je.posted_at, jl.line_no`;
+  let bal = d(0);
+  const out = lines.map((l) => { bal = bal.plus(l.debit).minus(l.credit); return { ...l, balance: bal.toString() }; });   // 1200 debit +, credit -; 2400 credit - (customer credit lowers what they owe)
+  const credit = (await tx`SELECT COALESCE(sum(jl.credit_base - jl.debit_base), 0)::text AS c FROM journal_lines jl JOIN accounts a ON a.id = jl.account_id WHERE a.code = '2400' AND jl.contact_id = ${customerId}`)[0]!.c as string;
+  return { customer: c, lines: out, balance: bal.toString(), unappliedCredit: credit };
+}
+
+export const receivablesAging = (tx: Tx) => tx`
+  WITH x AS (
+    SELECT si.id, si.doc_no, c.name AS customer, c.id AS customer_id, si.currency, si.net, si.due_date, si.doc_date,
+      si.net - COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED'), 0)
+             - COALESCE((SELECT sum(applied_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0) AS out
+    FROM sales_invoices si JOIN contacts c ON c.id = si.customer_id WHERE si.status = 'POSTED')
+  SELECT id, doc_no AS "docNo", customer, customer_id AS "customerId", currency, net::text AS total, out::text AS outstanding, due_date::text AS "dueDate",
+         GREATEST(0, CURRENT_DATE - COALESCE(due_date, doc_date)) AS "daysOverdue",
+         CASE WHEN CURRENT_DATE - COALESCE(due_date, doc_date) <= 0 THEN 'current' WHEN CURRENT_DATE - COALESCE(due_date, doc_date) <= 30 THEN '1-30'
+              WHEN CURRENT_DATE - COALESCE(due_date, doc_date) <= 60 THEN '31-60' WHEN CURRENT_DATE - COALESCE(due_date, doc_date) <= 90 THEN '61-90' ELSE '90+' END AS bucket
+  FROM x WHERE out > 0 ORDER BY due_date NULLS LAST, doc_date`;
