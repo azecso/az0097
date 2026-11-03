@@ -44,6 +44,7 @@ export async function bootstrapCompany(db: postgres.Sql, o: { companyName: strin
     const year = new Date().getUTCFullYear();
     for (const [t, prefix] of SEQUENCES)
       await tx`INSERT INTO document_sequences(company_id, doc_type, fiscal_year, prefix) VALUES (${companyId}, ${t}, ${year}, ${prefix})`;
+    await tx`SELECT seed_company_operational(${companyId})`;
     await tx`INSERT INTO audit_logs(company_id, user_id, action, entity_type, entity_id, after_data)
       VALUES (${companyId}, ${u!.id}, 'company.bootstrap', 'company', ${companyId}, ${tx.json({ owner: username })})`;
     return { companyId, ownerId: u!.id as string };

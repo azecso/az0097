@@ -11,3 +11,12 @@ export async function api<T = unknown>(path: string, init: { method?: string; bo
   return data as T;
 }
 export const fmt = (s: string | number) => String(s).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+/** "1450000.0000" -> "1,450,000"; keeps real decimals ("12.50"), drops trailing zeros. */
+export function money(v: string | number | null | undefined): string {
+  if (v === null || v === undefined || v === "") return "—";
+  const [i, f = ""] = String(v).split(".");
+  const frac = f.replace(/0+$/, "");
+  return (i ?? "0").replace(/\B(?=(\d{3})+(?!\d))/g, ",") + (frac ? "." + frac : "");
+}
+export const today = () => new Date().toISOString().slice(0, 10);

@@ -7,7 +7,12 @@ import { can, MeCtx, type Me } from "@/components/me";
 
 
 const NAV = [
-  { href: "/", label: "لوحة التحكم" }, { href: "/settings/company", label: "الشركة" }, { href: "/settings/fx", label: "أسعار الصرف" },
+  { href: "/", label: "لوحة التحكم" },
+  { href: "/purchases", label: "المشتريات", perm: "purchase:view" }, { href: "/contacts", label: "العملاء والموردون", perm: "contacts:view" },
+  { href: "/inventory/products", label: "المواد", perm: "products:view" }, { href: "/inventory/stock", label: "المخزون", perm: "products:view" },
+  { href: "/inventory/transfers", label: "تحويل المخزون", perm: "stock_transfer:view" }, { href: "/inventory/counts", label: "الجرد", perm: "inventory_count:view" },
+  { href: "/accounting", label: "المحاسبة", perm: "journal:view" },
+  { href: "/settings/company", label: "الشركة" }, { href: "/settings/fx", label: "أسعار الصرف", perm: "fx_rate:view" },
   { href: "/settings/users", label: "المستخدمون والصلاحيات", owner: true }, { href: "/settings/audit", label: "سجل التدقيق", perm: "audit:view" },
 ];
 
@@ -21,7 +26,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   }, []);
   if (!me) return <main className="login"><p>جارٍ التحميل…</p></main>;
   const items = NAV.filter((n) => (!n.owner || me.user.isOwner) && (!n.perm || can(me, n.perm)));
-  const nav = items.map((n) => <Link key={n.href} href={n.href} aria-current={path === n.href ? "page" : undefined}>{n.label}</Link>);
+  const nav = items.map((n) => <Link key={n.href} href={n.href} aria-current={path === n.href || (n.href !== "/" && path.startsWith(n.href + "/")) ? "page" : undefined}>{n.label}</Link>);
   return (
     <MeCtx.Provider value={me}>
       <div className="shell">
