@@ -1,0 +1,59 @@
+# Phase 1 stack: Caddy (TLS) -> app (Next.js) -> PostgreSQL. The DB is on an internal network only.
+# Backups to external encrypted storage are added in Phase 6.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:                      # runs on every `up`; idempotent
+    build: { context: ./app, target: tools }
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      APP_DB_USER: ${APP_DB_USER:?set in .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set in .env}
+    networks: [internal]
+    restart: "no"
+
+  app:
+    build: { context: ./app, target: runner }
+    restart: unless-stopped
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    environment:
+      DATABASE_URL: postgres://${APP_DB_USER}:${APP_DB_PASSWORD}@db:5432/${POSTGRES_DB}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      APP_SECRET: ${APP_SECRET:?set in .env}
+      REQUIRE_OWNER_2FA: ${REQUIRE_OWNER_2FA:-true}
+      UPLOAD_DIR: /data/uploads
+      CHROMIUM_PATH: /usr/bin/chromium-browser
+    read_only: true
+    tmpfs: [/tmp]
+    volumes: [uploads:/data/uploads]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [internal, edge]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    ports: ["80:80", "443:443"]
+    environment: { DOMAIN: "${DOMAIN:?set in .env}" }
+    volumes: [./ops/Caddyfile:/etc/caddy/Caddyfile:ro, caddy_data:/data, caddy_config:/config]
+    networks: [edge]
+
+networks:
+  internal: { internal: true }
+  edge: {}
+volumes: { pgdata: {}, caddy_data: {}, caddy_config: {}, uploads: {} }

@@ -1,0 +1,23 @@
+# Render Blueprint — no Docker needed. Dashboard: New > Blueprint > pick this repo/branch.
+databases:
+  - name: erp-db
+    plan: basic-256mb        # check current plans/prices on Render before choosing
+    databaseName: erp
+services:
+  - type: web
+    name: erp-web
+    runtime: node
+    rootDir: app
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: node scripts/start-managed.mjs
+    healthCheckPath: /api/health
+    envVars:
+      - { key: NODE_VERSION, value: "22" }
+      - { key: DATABASE_URL, fromDatabase: { name: erp-db, property: connectionString } }
+      - { key: APP_SECRET, generateValue: true }
+      - { key: APP_DB_PASSWORD, generateValue: true }
+      - { key: COOKIE_SECURE, value: "true" }
+      - { key: REQUIRE_OWNER_2FA, value: "false" }   # turn on after enrolling 2FA
+      - { key: COMPANY_NAME, sync: false }
+      - { key: OWNER_USERNAME, sync: false }
+      - { key: OWNER_PASSWORD, sync: false }          # remove after first deploy
