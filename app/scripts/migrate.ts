@@ -42,7 +42,8 @@ export async function migrate(url: string, appRole?: { user: string; password: s
       // DELETE only on tables whose rows may be removed while DRAFT (guard triggers reject non-DRAFT deletes).
       const deletable = ["user_permissions", "product_uoms", "purchase_orders", "purchase_lines", "purchase_charges", "purchase_returns", "purchase_return_lines",
         "supplier_payments", "supplier_payment_allocations", "stock_transfers", "stock_transfer_lines", "inventory_counts", "inventory_count_lines",
-        "sales_quotes", "sales_quote_lines", "sales_invoices", "sales_lines", "delivery_notes", "delivery_lines", "sales_returns", "sales_return_lines", "customer_receipts", "receipt_allocations", "cash_transfers"];
+        "sales_quotes", "sales_quote_lines", "sales_invoices", "sales_lines", "delivery_notes", "delivery_lines", "sales_returns", "sales_return_lines", "customer_receipts", "receipt_allocations", "cash_transfers",
+        "expenses", "expense_payments", "personal_advances", "opening_balances", "profit_settlements", "capital_transactions", "employees"];
       for (const t of deletable) await sql.unsafe(`GRANT DELETE ON ${t} TO ${appRole.user}`);
       await sql.unsafe(`REVOKE UPDATE ON schema_migrations FROM ${appRole.user}`);
       await sql.unsafe(`GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO ${appRole.user}`);

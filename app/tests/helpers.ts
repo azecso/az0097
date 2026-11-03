@@ -28,6 +28,7 @@ export async function setupDb(): Promise<TestEnv> {
   process.env.DATABASE_URL = appUrl;
   process.env.COOKIE_SECURE = "false";
   process.env.LOGIN_RATE_LIMIT = "1000";
+  process.env.REQUIRE_OWNER_2FA = "false";
   const app = postgres(appUrl, { max: 5, onnotice: () => {} });
   return { admin, app, dbName, companyId, ownerId, appUrl, adminDbUrl, teardown: async () => {
     await app.end(); await admin.end();

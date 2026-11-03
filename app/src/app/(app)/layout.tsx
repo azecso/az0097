@@ -11,9 +11,11 @@ const NAV = [
   { href: "/sales", label: "المبيعات", perm: "sales:view" }, { href: "/purchases", label: "المشتريات", perm: "purchase:view" }, { href: "/cash", label: "النقدية والعهدة", perm: "voucher:view" }, { href: "/contacts", label: "العملاء والموردون", perm: "contacts:view" },
   { href: "/inventory/products", label: "المواد", perm: "products:view" }, { href: "/inventory/stock", label: "المخزون", perm: "products:view" },
   { href: "/inventory/transfers", label: "تحويل المخزون", perm: "stock_transfer:view" }, { href: "/inventory/counts", label: "الجرد", perm: "inventory_count:view" },
-  { href: "/accounting", label: "المحاسبة", perm: "journal:view" },
+  { href: "/expenses", label: "المصاريف", perm: "expense:view" }, { href: "/payroll", label: "الرواتب", perm: "payroll:view" }, { href: "/capital", label: "رأس المال والسحوبات", perm: "capital:view" },
+  { href: "/partners", label: "الشراكة والأرباح", perm: "profit_settlement:view" },
+  { href: "/accounting", label: "المحاسبة", perm: "journal:view" }, { href: "/accounting/opening", label: "الأرصدة الافتتاحية", perm: "opening_balance:view" }, { href: "/accounting/periods", label: "إقفال الفترات", perm: "period_close:view" },
   { href: "/settings/company", label: "الشركة" }, { href: "/settings/fx", label: "أسعار الصرف", perm: "fx_rate:view" },
-  { href: "/settings/users", label: "المستخدمون والصلاحيات", owner: true }, { href: "/settings/audit", label: "سجل التدقيق", perm: "audit:view" },
+  { href: "/settings/users", label: "المستخدمون والصلاحيات", owner: true }, { href: "/settings/security", label: "الأمان (2FA)", owner: true }, { href: "/settings/audit", label: "سجل التدقيق", perm: "audit:view" },
 ];
 
 export default function Shell({ children }: { children: React.ReactNode }) {

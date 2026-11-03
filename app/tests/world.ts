@@ -9,7 +9,7 @@ export interface World {
   api: (s: Session, h: H, o?: Parameters<typeof call>[1]) => ReturnType<typeof call>;
   mkProduct: (code: string, extra?: Record<string, unknown>) => Promise<string>;
   inject: <T>(fn: (tx: any, actor: any, libs: { postJournal: any; consumeFifo: any; receiveLot: any }) => Promise<T>) => Promise<T>;
-  tb: () => Promise<any>; recon: () => Promise<any>;
+  tb: () => Promise<any>; recon: () => Promise<any>; fund: (amount?: string) => Promise<void>; cat: (name: string) => Promise<string>;
   sale: (o: { product: string; qty: string; price: string; type?: "CASH" | "CREDIT"; date?: string; customer?: string; currency?: string; rate?: string; discount?: string; lineDiscount?: string; mode?: "WITH_INVOICE" | "SEPARATE"; locationId?: string; cash?: string; session?: Session; noPost?: boolean }) => Promise<any>;
   getInvoice: (id: string) => Promise<any>;
   buy: (o: { product: string; qty: string; price: string; date?: string; type?: "CASH" | "CREDIT"; currency?: string; rate?: string; uom?: string; locationId?: string; session?: Session }) => Promise<any>;
@@ -66,6 +66,35 @@ export async function makeWorld(): Promise<World> {
   R.ctransferPost = (await imp("@/app/api/cash-transfers/[id]/post/route")).POST;
   R.custStatement = (await imp("@/app/api/customers/[id]/statement/route")).GET;
   R.receivables = (await imp("@/app/api/reports/receivables/route")).GET;
+  R.categories = await imp("@/app/api/expense-categories/route");
+  R.expenses = await imp("@/app/api/expenses/route");
+  R.expenseId = await imp("@/app/api/expenses/[id]/route");
+  R.expensePost = (await imp("@/app/api/expenses/[id]/post/route")).POST;
+  R.expenseReverse = (await imp("@/app/api/expenses/[id]/reverse/route")).POST;
+  R.expensePay = await imp("@/app/api/expense-payments/route");
+  R.employees = await imp("@/app/api/employees/route");
+  R.payroll = await imp("@/app/api/payroll/route");
+  R.payrollPost = (await imp("@/app/api/payroll/[id]/post/route")).POST;
+  R.payrollReverse = (await imp("@/app/api/payroll/[id]/reverse/route")).POST;
+  R.payrollPay = await imp("@/app/api/payroll-payments/route");
+  R.capital = await imp("@/app/api/capital/route");
+  R.capitalApprove = (await imp("@/app/api/capital/[id]/approve/route")).POST;
+  R.capitalReject = (await imp("@/app/api/capital/[id]/reject/route")).POST;
+  R.capitalReverse = (await imp("@/app/api/capital/[id]/reverse/route")).POST;
+  R.advances = await imp("@/app/api/personal-advances/route");
+  R.advancePost = (await imp("@/app/api/personal-advances/[id]/post/route")).POST;
+  R.opening = await imp("@/app/api/opening/route");
+  R.openingPost = (await imp("@/app/api/opening/post/route")).POST;
+  R.periods = await imp("@/app/api/periods/route");
+  R.settlements = await imp("@/app/api/profit-settlements/route");
+  R.settlePreview = (await imp("@/app/api/profit-settlements/preview/route")).POST;
+  R.settleApprove = (await imp("@/app/api/profit-settlements/[id]/approve/route")).POST;
+  R.settleReverse = (await imp("@/app/api/profit-settlements/[id]/reverse/route")).POST;
+  R.payouts = await imp("@/app/api/profit-payouts/route");
+  R.payoutReverse = (await imp("@/app/api/profit-payouts/[id]/reverse/route")).POST;
+  R.partners = (await imp("@/app/api/partners/route")).GET;
+  R.partnerStatement = (await imp("@/app/api/partners/[id]/statement/route")).GET;
+  R.totp = await imp("@/app/api/auth/totp/route");
   R.lots = (await imp("@/app/api/products/[id]/lots/route")).GET;
   const owner = await loginAs(R.login, "owner", OWNER_PW);
   await call(R.users.POST, { method: "POST", session: owner, body: { username: "acc", displayName: "المحاسب", password: ACCT_PW } });
@@ -105,7 +134,13 @@ export async function makeWorld(): Promise<World> {
     const p = await api(s, R.invoicePost, { method: "POST", params: { id: c.body.id } });
     return { ...p, id: c.body.id };
   };
-  return { env, owner, acct, R, ids, api, mkProduct, inject, buy, sale, getInvoice: async (id: string) => (await api(owner, R.invoiceId.GET, { params: { id } })).body,
+  const fund = async (amount = "10000000") => {                                   // capital injection through the real request/approve flow
+    const r = await api(acct, R.capital.POST, { method: "POST", body: { kind: "INJECTION", docDate: "2026-01-01", cashAccountId: ids.cashIQD, currency: "IQD", amount, reason: "رأس مال ابتدائي" } });
+    const a = await api(owner, R.capitalApprove, { method: "POST", params: { id: r.body.id }, body: {} });
+    if (a.status !== 200) throw new Error("fund failed " + JSON.stringify(a.body));
+  };
+  const cat = async (name: string) => (await api(owner, R.categories.GET)).body.find((c: any) => c.name === name).id as string;
+  return { env, owner, acct, R, ids, api, mkProduct, inject, buy, sale, fund, cat, getInvoice: async (id: string) => (await api(owner, R.invoiceId.GET, { params: { id } })).body,
     tb: async () => (await api(owner, R.trial)).body, recon: async () => (await api(owner, R.recon)).body };
 }
 export async function capital(w: World, amount = "10000000") {

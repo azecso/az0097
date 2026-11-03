@@ -8,6 +8,7 @@ import { d, toBase } from "../money";
 import { postJournal, reverseEntry, type JLine } from "../ledger";
 import { currencyCode, dateStr, draftRef, moneyStr, rateStr, resolveRate, uuid, yearOf } from "./common";
 import { invoiceFinancials } from "./sales";
+import { assertCashAvailable } from "./cash";
 
 const dateOf = (v: unknown) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v));
 
@@ -171,6 +172,7 @@ export async function postCashTransfer(tx: Tx, who: Principal, actor: Actor, id:
   const date = dateOf(t.doc_date), cur = t.currency as string, fx = t.exchange_rate_snapshot as string;
   const docNo = (await tx`SELECT next_document_number(${who.companyId}, 'cash_transfer', ${yearOf(date)}) AS n`)[0]!.n as string;
   const base = toBase(t.amount, fx, cur);
+  await assertCashAvailable(tx, t.from_account_id, t.amount);
   const [from] = await tx`SELECT ca.id, a.code FROM cash_accounts ca JOIN accounts a ON a.id = ca.account_id WHERE ca.id = ${t.from_account_id}`;
   const [to] = await tx`SELECT ca.id, a.code FROM cash_accounts ca JOIN accounts a ON a.id = ca.account_id WHERE ca.id = ${t.to_account_id}`;
   const je = await postJournal(tx, actor, { date, sourceDocType: "cash_transfer", sourceDocId: id, memo: `سند تحويل ${docNo}`,

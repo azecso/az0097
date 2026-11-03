@@ -9,6 +9,7 @@ import { postJournal, reverseEntry, type JLine } from "../ledger";
 import { consumeFifo, inventoryAccountOf, restoreConsumptions, restoreForReturn, undoReturnRestock } from "../inventory";
 import { currencyCode, dateStr, draftRef, mainLocationId, moneyStr, qtyStr, rateStr, resolveRate, toBaseQty, uuid, yearOf } from "./common";
 import { createCashReceipt, reverseReceiptCore } from "./receipts";
+import { assertCashAvailable } from "./cash";
 
 const dateOf = (v: unknown) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v));
 
@@ -31,6 +32,7 @@ export async function invoiceFinancials(tx: Tx, invoiceId: string) {
  * a RESTRICTION indicator for distributing profit, not new accounting profit. Zero/negative adjusted value => 0.
  */
 export async function invoiceProfit(tx: Tx, invoiceId: string) {
+  if ((await tx`SELECT is_opening FROM sales_invoices WHERE id = ${invoiceId}`)[0]?.is_opening) return { grossProfitBase: "0", adjustedProfitBase: "0", collectedRatio: "0", linkedProfitBase: "0" };   // opening balances carry no profit
   const fin = await invoiceFinancials(tx, invoiceId);
   const [r] = await tx`SELECT si.net_base::text AS net_base,
       COALESCE((SELECT sum(value_base) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0)::text AS ret_base,
@@ -345,7 +347,7 @@ export async function postSalesReturn(tx: Tx, who: Principal, actor: Actor, id: 
   let refund = d(0), credit = d(0);
   if (excess.gt(0)) {
     if (r.settlement === "CASH_REFUND") {
-      refund = excess; const [ca] = await tx`SELECT ca.id, a.code FROM cash_accounts ca JOIN accounts a ON a.id = ca.account_id WHERE ca.id = ${r.cash_account_id}`;
+      refund = excess; await assertCashAvailable(tx, r.cash_account_id, excess); const [ca] = await tx`SELECT ca.id, a.code FROM cash_accounts ca JOIN accounts a ON a.id = ca.account_id WHERE ca.id = ${r.cash_account_id}`;
       jl.push({ account: ca!.code, credit: excessB, currency: cur, amountOrig: excess, fx });
       await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id) VALUES (${who.companyId}, ${ca!.id}, ${excess.neg().toString()}, ${excessB.neg().toString()}, 'sales_return', ${id})`;
     } else { credit = excess; jl.push({ account: "2400", credit: excessB, currency: cur, amountOrig: excess, fx, contactId: inv!.customer_id }); }

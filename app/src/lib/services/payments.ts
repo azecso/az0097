@@ -8,6 +8,7 @@ import { d, roundMoney, toBase } from "../money";
 import { postJournal, reverseEntry, type JLine } from "../ledger";
 import { currencyCode, dateStr, draftRef, moneyStr, rateStr, resolveRate, uuid, yearOf } from "./common";
 import { purchaseOutstanding } from "./purchases";
+import { assertCashAvailable } from "./cash";
 
 export const paymentSchema = z.object({
   supplierId: uuid, docDate: dateStr, cashAccountId: uuid, currency: currencyCode, exchangeRate: rateStr.nullish(), amount: moneyStr, notes: z.string().max(500).nullish(),
@@ -82,6 +83,7 @@ export async function postPayment(tx: Tx, who: Principal, actor: Actor, id: stri
   const advance = d(p.amount).minus(allocated);
   if (advance.gt(0)) apBase = apBase.plus(toBase(advance, fx, cur));
   const cashBase = toBase(p.amount, fx, cur), fxDiff = cashBase.minus(apBase);   // + = paid more dinars than booked (loss)
+  await assertCashAvailable(tx, p.cash_account_id, p.amount);
   const [ca] = await tx`SELECT ca.id, a.code FROM cash_accounts ca JOIN accounts a ON a.id = ca.account_id WHERE ca.id = ${p.cash_account_id}`;
   const jl: JLine[] = [{ account: "2100", debit: apBase, currency: cur, amountOrig: p.amount, fx, contactId: p.supplier_id },
     { account: ca!.code, credit: cashBase, currency: cur, amountOrig: p.amount, fx }];

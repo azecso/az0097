@@ -4,6 +4,7 @@ import { randomToken, sha256 } from "./crypto";
 import { AppError, badRequest } from "./errors";
 import type { Principal } from "./authz";
 import type postgres from "postgres";
+import { unseal, verifyTotp } from "./totp";
 
 export const SESSION_COOKIE = "erp_session";
 export const MAX_FAILS = 5, LOCK_MINUTES = 15, SESSION_HOURS = 12, IDLE_MINUTES = 60;
@@ -20,7 +21,7 @@ let dummyHash: Promise<string> | undefined;
 
 export interface LoginResult { token: string; csrf: string; principal: Principal }
 
-export async function login(username: string, password: string, meta: { ip?: string | null; ua?: string | null; deviceId?: string | null },
+export async function login(username: string, password: string, totp: string | undefined, meta: { ip?: string | null; ua?: string | null; deviceId?: string | null },
                             db: postgres.Sql = sql): Promise<LoginResult> {
   const rows = await db`SELECT * FROM auth_find_user(${username})`;
   const u = rows[0];
@@ -31,6 +32,12 @@ export async function login(username: string, password: string, meta: { ip?: str
   if (!u || locked || !okPw) {
     if (u && !locked) await db`SELECT auth_record_failure(${u.id}, ${MAX_FAILS}, ${LOCK_MINUTES})`;
     throw new AppError(401, "INVALID_CREDENTIALS", "بيانات الدخول غير صحيحة أو الحساب مقفل مؤقتاً");
+  }
+  if (u.totp_enabled) {                         // password was right; now the second factor
+    const step = totp ? verifyTotp(unseal(u.totp_secret_enc), totp) : null;
+    if (!totp) throw new AppError(401, "TOTP_REQUIRED", "أدخل رمز المصادقة الثنائية");
+    const used = step === null ? false : (await db`SELECT auth_totp_use(${u.id}, ${step}) AS ok`)[0]!.ok;
+    if (!used) { await db`SELECT auth_record_failure(${u.id}, ${MAX_FAILS}, ${LOCK_MINUTES})`; throw new AppError(401, "INVALID_CREDENTIALS", "بيانات الدخول غير صحيحة أو الحساب مقفل مؤقتاً"); }
   }
   await db`SELECT auth_record_success(${u.id})`;
   const token = randomToken(32), csrf = randomToken(24);

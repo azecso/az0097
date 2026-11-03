@@ -7,6 +7,7 @@ import { badRequest, conflict, forbidden, notFound } from "../errors";
 import { d, roundMoney, toBase } from "../money";
 import { postJournal, reverseEntry, type JLine } from "../ledger";
 import { consumeFromLots, inventoryAccountOf, lotFamily, receiveLot, retireLots } from "../inventory";
+import { assertCashAvailable } from "./cash";
 import { currencyCode, dateStr, draftRef, mainLocationId, moneyStr, qtyStr, rateStr, resolveRate, toBaseQty, uuid, yearOf } from "./common";
 
 const stamp = (date: string) => `${date}T${new Date().toISOString().slice(11, 19)}Z`;   // keeps same-day FIFO order = posting order
@@ -180,6 +181,7 @@ export async function postPurchase(tx: Tx, who: Principal, actor: Actor, id: str
   const jl: JLine[] = [...invByAcct].map(([account, v]) => ({ account, debit: v.base, currency: cur, amountOrig: v.orig, fx }));
   for (const [account, v] of expense) jl.push({ account, debit: v.base, currency: cur, amountOrig: v.orig, fx, memo: "تكلفة إضافية على الفاتورة (مصروف)" });
   if (po.payment_type === "CASH") {
+    await assertCashAvailable(tx, po.cash_account_id, totalOrig);
     const [ca] = await tx`SELECT ca.id, a.code FROM cash_accounts ca JOIN accounts a ON a.id = ca.account_id WHERE ca.id = ${po.cash_account_id}`;
     jl.push({ account: ca!.code, credit: totalBase, currency: cur, amountOrig: totalOrig, fx });
     await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id) VALUES (${who.companyId}, ${ca!.id}, ${totalOrig.neg().toString()}, ${totalBase.neg().toString()}, 'purchase_order', ${id})`;
