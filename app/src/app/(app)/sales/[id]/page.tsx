@@ -4,6 +4,7 @@ import { useState } from "react";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
+import { Attach } from "@/components/attach";
 
 interface Line { id: string; lineNo: number; productCode: string; productName: string; uom: string; qty: string; qtyBase: string; unitPrice: string; lineDiscount: string; lineTotal: string; delivered: string; returned: string }
 interface Doc { id: string; customerId: string; docNo: string | null; draftRef: string; docDate: string; customerName: string; saleType: string; currency: string; exchangeRate: string; gross: string; discount: string; net: string; netBase: string; status: string; deliveryMode: string; cashAccountId: string | null;
@@ -34,8 +35,10 @@ export default function InvoiceView() {
     <MsgBox msg={msg} />
     <p style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
       {d.status === "DRAFT" && can(me, "sales:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/sales-invoices/${id}/post`, { method: "POST" }), "تم الترحيل وإصدار الرقم النهائي")}>ترحيل</button>}
+      <a href={`/print/sales-invoice/${id}`} target="_blank" rel="noreferrer"><button>طباعة / PDF</button></a>
       {d.status === "DRAFT" && can(me, "sales:edit_draft") && <button className="danger" disabled={busy} onClick={async () => { if (await run(() => api(`/api/sales-invoices/${id}`, { method: "DELETE" }), "حُذفت المسودة")) router.push("/sales"); }}>حذف المسودة</button>}
     </p>
+    <Attach entityType="sales_invoice" entityId={id} label="مرفقات الفاتورة (صور/إيصالات)" />
     {posted && Number(d.outstanding) > 0 && can(me, "voucher:create") && <div className="card" style={{ marginTop: 12 }}><h2>تسجيل قبض على هذه الفاتورة</h2>
       <div className="row"><div><label>المبلغ</label><input value={pay} onChange={(e) => setPay(e.target.value)} inputMode="decimal" dir="ltr" /></div>
         <div><label>الاستلام في</label><select value={acct} onChange={(e) => setAcct(e.target.value)}><option value="">اختر…</option>{cash.filter((c) => c.currency === d.currency).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>

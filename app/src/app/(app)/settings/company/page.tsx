@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/client";
 import { can, useMe } from "@/components/me";
+import { Attach } from "@/components/attach";
 
 interface Co { name: string; nameEn: string | null; address: string | null; phones: string[] | null; baseCurrency: string; allowNegativeStock: boolean; landedCostPolicy: "EXCLUDE" | "INCLUDE"; version: number }
 export default function Company() {
@@ -31,5 +32,7 @@ export default function Company() {
       <label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" name="neg" defaultChecked={c.allowNegativeStock} disabled={!editable} style={{ width: 24, minHeight: 24 }} />السماح بالمخزون السالب (غير مستحسن)</label>
       {msg && <div className={`msg ${msg.t}`} role="status">{msg.m}</div>}
       {editable ? <button className="primary">حفظ</button> : <span className="badge">للمالك فقط</span>}
-    </form></>);
+    </form>
+    {editable && <><Attach entityType="company_logo" entityId={me.companyId} label="شعار الشركة (يظهر على المستندات المطبوعة)" accept="image/png,image/jpeg,image/webp" single />
+      <Attach entityType="company_signature" entityId={me.companyId} label="التوقيع (صورة)" accept="image/png,image/jpeg,image/webp" single /></>}</>);
 }

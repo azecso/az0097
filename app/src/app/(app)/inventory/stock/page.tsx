@@ -17,6 +17,7 @@ export default function Stock() {
       <div className="card stat"><div className="label">قيمة المخزون — عهدة الشريك</div><div className="value"><span className="num">{money(total("PARTNER_CUSTODY"))}</span></div></div>
       {rec && <div className="card stat"><div className="label">مطابقة المخزون مع الدفتر</div><div className="value">{rec.ok ? "✔ متطابق" : "⚠ فرق"}</div></div>}
     </div>
+    <p style={{ display: "flex", gap: 8 }}><a href="/api/export/stock"><button>⬇ Excel</button></a><a href="/print/report/stock" target="_blank" rel="noreferrer"><button>طباعة / PDF</button></a></p>
     {err && <div className="msg err">{err}</div>}
     <div className="card cards-as-list" style={{ marginTop: 12 }}><table><thead><tr><th>الكود</th><th>المادة</th><th>الموقع</th><th>الكمية</th><th>القيمة (IQD)</th><th></th></tr></thead>
       <tbody>{data.map((s) => <tr key={s.productId + s.location}><td><span className="num">{s.code}</span></td><td>{s.name}</td><td>{s.location}</td><td><span className="num">{money(s.qty)} {s.baseUom}</span></td><td><span className="num">{money(s.value)}</span></td>

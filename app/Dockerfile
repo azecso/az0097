@@ -15,9 +15,11 @@ COPY . .
 CMD ["npx", "tsx", "scripts/migrate.ts"]
 
 FROM node:22-alpine AS runner
-ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0 CHROMIUM_PATH=/usr/bin/chromium-browser HOME=/tmp
 WORKDIR /app
-RUN addgroup -S app && adduser -S app -G app
+# Chromium + Arabic fonts: server-side A4 PDF rendering (real Arabic shaping)
+RUN apk add --no-cache chromium font-noto-arabic font-noto && addgroup -S app && adduser -S app -G app
+RUN mkdir -p /data/uploads && chown app:app /data/uploads
 COPY --from=build --chown=app:app /app/.next/standalone ./
 COPY --from=build --chown=app:app /app/.next/static ./.next/static
 COPY --from=build --chown=app:app /app/public ./public

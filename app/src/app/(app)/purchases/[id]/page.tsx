@@ -4,6 +4,7 @@ import { useState } from "react";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
+import { Attach } from "@/components/attach";
 
 interface Line { id: string; lineNo: number; productCode: string; productName: string; uom: string; qty: string; qtyBase: string; unitPrice: string; lineTotal: string; lineTotalBase: string }
 interface Doc { id: string; docNo: string | null; draftRef: string; docDate: string; supplierName: string; paymentType: string; currency: string; exchangeRate: string; total: string; totalBase: string; status: string; version: number; lines: Line[]; charges: { kind: string; description: string | null; amount: string; capitalize: boolean }[]; paid?: string; returned?: string; outstanding?: string; supplierInvoiceNo: string | null; cashAccountId: string | null }
@@ -30,8 +31,10 @@ export default function PurchaseView() {
     <MsgBox msg={msg} />
     <p style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
       {d.status === "DRAFT" && can(me, "purchase:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/purchases/${id}/post`, { method: "POST" }), "تم الترحيل وإصدار الرقم النهائي")}>ترحيل</button>}
+      <a href={`/print/purchase/${id}`} target="_blank" rel="noreferrer"><button>طباعة / PDF</button></a>
       {d.status === "DRAFT" && can(me, "purchase:edit_draft") && <button className="danger" disabled={busy} onClick={async () => { if (await run(() => api(`/api/purchases/${id}`, { method: "DELETE" }), "حُذفت المسودة")) router.push("/purchases"); }}>حذف المسودة</button>}
     </p>
+    <Attach entityType="purchase_order" entityId={id} label="صور فاتورة المورد والإيصالات" />
     {posted && can(me, "purchase:cancel") && <div className="card" style={{ marginTop: 12 }}><h2>عكس المستند</h2><p>لا يُعدَّل المستند المرحّل؛ يُنشأ قيد عكسي بالسبب أدناه.</p>
       <div className="row"><div><label htmlFor="rs">السبب</label><input id="rs" value={reason} onChange={(e) => setReason(e.target.value)} /></div>
         <button className="danger" disabled={busy || reason.length < 3} onClick={() => run(() => api(`/api/purchases/${id}/reverse`, { method: "POST", body: { reason } }), "تم عكس المستند")}>عكس</button></div></div>}

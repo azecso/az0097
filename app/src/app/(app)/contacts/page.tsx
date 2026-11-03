@@ -9,7 +9,7 @@ interface Stmt { supplier: { name: string }; balance: string; lines: { date: str
 const KIND: Record<string, string> = { SUPPLIER: "مورد", CUSTOMER: "عميل", BOTH: "عميل ومورد" };
 export default function Contacts() {
   const me = useMe(); const { data, err, reload } = useLoad<C[]>("/api/contacts?archived=1", []); const { msg, busy, run } = useAction(reload);
-  const [stmt, setStmt] = useState<Stmt | null>(null);
+  const [stmt, setStmt] = useState<Stmt | null>(null); const [sel, setSel] = useState<{ id: string; kind: "supplier" | "customer" } | null>(null);
   async function create(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault(); const f = new FormData(e.currentTarget), form = e.currentTarget;
     const r = await run(() => api("/api/contacts", { method: "POST", body: { kind: String(f.get("kind")), code: String(f.get("code")), name: String(f.get("name")), phones: String(f.get("phones") ?? "").split(/[,،\s]+/).filter(Boolean), paymentTermsDays: Number(f.get("terms") ?? 0) } }), "تمت الإضافة");
@@ -27,9 +27,10 @@ export default function Contacts() {
     <MsgBox msg={msg} />{err && <div className="msg err">{err}</div>}
     <div className="card cards-as-list" style={{ marginTop: 12 }}><table><thead><tr><th>الكود</th><th>الاسم</th><th>النوع</th><th>أيام السداد</th><th></th></tr></thead>
       <tbody>{data.map((c) => <tr key={c.id}><td><span className="num">{c.code}</span></td><td>{c.name}</td><td>{KIND[c.kind]}</td><td><span className="num">{c.paymentTermsDays}</span></td>
-        <td><button onClick={() => api<Stmt>(c.kind === "SUPPLIER" ? `/api/contacts/${c.id}/statement` : `/api/customers/${c.id}/statement`).then((x) => setStmt({ ...x, supplier: (x as any).supplier ?? (x as any).customer }))}>كشف الحساب</button></td></tr>)}
+        <td><button onClick={() => api<Stmt>(c.kind === "SUPPLIER" ? `/api/contacts/${c.id}/statement` : `/api/customers/${c.id}/statement`).then((x) => { setSel({ id: c.id, kind: c.kind === "SUPPLIER" ? "supplier" : "customer" }); setStmt({ ...x, supplier: (x as any).supplier ?? (x as any).customer }); })}>كشف الحساب</button></td></tr>)}
         {data.length === 0 && <tr><td colSpan={5}>لا توجد جهات بعد</td></tr>}</tbody></table></div>
-    {stmt && <div className="card" style={{ marginTop: 12 }}><h2>كشف حساب: {stmt.supplier.name}</h2>
+    {stmt && <div className="card" style={{ marginTop: 12 }}>
+      {sel && <p style={{ display: "flex", gap: 8 }}><a href={`/api/export/${sel.kind}-statement?id=${sel.id}`}><button>⬇ Excel</button></a><a href={`/print/statement/${sel.kind}/${sel.id}`} target="_blank" rel="noreferrer"><button>طباعة / PDF</button></a></p>}<h2>كشف حساب: {stmt.supplier.name}</h2>
       <p>الرصيد (موجب = مستحق للمورد / على العميل): <strong className="num">{money(stmt.balance)}</strong> IQD</p>
       <table><thead><tr><th>التاريخ</th><th>القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead>
         <tbody>{stmt.lines.map((l, i) => <tr key={i}><td><span className="num">{l.date}</span></td><td><span className="num">{l.entryNo}</span></td><td>{l.memo}</td><td><span className="num">{money(l.debit)}</span></td><td><span className="num">{money(l.credit)}</span></td><td><span className="num">{money(l.balance)}</span></td></tr>)}</tbody></table></div>}

@@ -2,18 +2,19 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, today } from "@/lib/client";
+import { createDraft, useRefList } from "@/lib/offline/use";
 import { MsgBox, useAction, useLoad } from "@/components/ui";
 
 interface Prod { id: string; code: string; name: string; baseUom: string; uoms: { uom: string }[]; defaultSalePrice: string | null } interface Contact { id: string; name: string }
 export default function NewQuote() {
-  const router = useRouter(); const { msg, busy, run } = useAction(); const prods = useLoad<Prod[]>("/api/products", []).data, cust = useLoad<Contact[]>("/api/contacts?kind=CUSTOMER", []).data;
+  const router = useRouter(); const { msg, busy, run, setMsg } = useAction(); const prods = useRefList<Prod>("products", "/api/products").data, cust = useRefList<Contact & { kind?: string }>("contacts", "/api/contacts?kind=CUSTOMER", (c) => c.kind !== "SUPPLIER").data;
   const [cur, setCur] = useState("IQD"); const [lines, setLines] = useState([{ productId: "", uom: "", qty: "", unitPrice: "", lineDiscount: "" }]);
   const upd = (i: number, k: string, v: string) => setLines((ls) => ls.map((l, j) => j !== i ? l : { ...l, [k]: v, ...(k === "productId" ? { uom: prods.find((p) => p.id === v)?.baseUom ?? "", unitPrice: prods.find((p) => p.id === v)?.defaultSalePrice ?? l.unitPrice } : {}) }));
   async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault(); const f = new FormData(e.currentTarget);
-    const r = await run(() => api<{ id: string }>("/api/sales-quotes", { method: "POST", body: { customerId: String(f.get("customer")), docDate: String(f.get("date")), validUntil: String(f.get("valid") ?? "") || null, currency: cur, exchangeRate: cur === "USD" ? String(f.get("rate") || "") || null : null,
+    const r = await run(() => createDraft({ entityType: "sales_quote", endpoint: "/api/sales-quotes", title: "عرض سعر (أوفلاين)", payload: { customerId: String(f.get("customer")), docDate: String(f.get("date")), validUntil: String(f.get("valid") ?? "") || null, currency: cur, exchangeRate: cur === "USD" ? String(f.get("rate") || "") || null : null,
       discount: String(f.get("disc") || "0"), terms: String(f.get("terms") ?? "") || null, notes: String(f.get("notes") ?? "") || null, lines: lines.map((l) => ({ ...l, lineDiscount: l.lineDiscount || "0" })) } }), "حُفظت المسودة");
-    if (r) router.push("/sales/quotes");
+    if (r?.mode === "queued") { setMsg({ t: "ok", m: "📴 حُفظت على جهازك مشفّرة وبانتظار المزامنة — ستُرسل تلقائياً عند عودة الاتصال (تابعها من «المزامنة»)." }); setLines([{ productId: "", uom: "", qty: "", unitPrice: "", lineDiscount: "" }]); } else if (r) router.push("/sales/quotes");
   }
   return (<><h1>عرض سعر جديد</h1>
     <form className="card" onSubmit={save} style={{ display: "grid", gap: 12 }}>

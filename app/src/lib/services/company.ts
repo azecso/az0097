@@ -6,7 +6,7 @@ import { badRequest, conflict, notFound } from "../errors";
 
 export async function getCompany(tx: Tx) {
   const [c] = await tx`SELECT id, name, name_en AS "nameEn", address, phones, base_currency AS "baseCurrency",
-      allow_negative_stock AS "allowNegativeStock", landed_cost_policy AS "landedCostPolicy", version FROM companies`;
+      allow_negative_stock AS "allowNegativeStock", landed_cost_policy AS "landedCostPolicy", logo_attachment_id AS "logoAttachmentId", signature_attachment_id AS "signatureAttachmentId", version FROM companies`;
   if (!c) throw notFound();
   return c;
 }

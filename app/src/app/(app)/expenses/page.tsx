@@ -2,18 +2,20 @@
 import { useState } from "react";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
+import { createDraft, useRefList } from "@/lib/offline/use";
 import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
 
 interface E { id: string; draftRef: string; docNo: string | null; docDate: string; category: string; description: string; currency: string; amount: string; paymentMode: string; partnerTreatment: string | null; status: string; outstanding: string }
 interface Cat { id: string; name: string } interface Cash { id: string; name: string; currency: string; kind: string }
 const MODE: Record<string, string> = { PAID_CASH: "مدفوع نقداً", ACCRUED: "مستحق (آجل)", PAID_BY_PARTNER: "دفعه الشريك" };
 export default function Expenses() {
-  const me = useMe(); const list = useLoad<E[]>("/api/expenses", []); const cats = useLoad<Cat[]>("/api/expense-categories", []).data; const cash = useLoad<Cash[]>("/api/cash-accounts", []).data;
-  const { msg, busy, run } = useAction(list.reload); const [mode, setMode] = useState("PAID_CASH"); const [cur, setCur] = useState("IQD"); const [treat, setTreat] = useState("PAYABLE_TO_PARTNER"); const [reason, setReason] = useState(""); const [pay, setPay] = useState<Record<string, string>>({});
+  const me = useMe(); const list = useLoad<E[]>("/api/expenses", []); const cats = useRefList<Cat>("expenseCategories", "/api/expense-categories").data; const cash = useRefList<Cash>("cashAccounts", "/api/cash-accounts").data;
+  const { msg, busy, run, setMsg } = useAction(list.reload); const [mode, setMode] = useState("PAID_CASH"); const [cur, setCur] = useState("IQD"); const [treat, setTreat] = useState("PAYABLE_TO_PARTNER"); const [reason, setReason] = useState(""); const [pay, setPay] = useState<Record<string, string>>({});
   async function create(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault(); const f = new FormData(e.currentTarget);
-    await run(() => api("/api/expenses", { method: "POST", body: { docDate: String(f.get("date")), categoryId: String(f.get("cat")), description: String(f.get("desc")), currency: cur, exchangeRate: cur === "USD" ? String(f.get("rate") || "") || null : null, amount: String(f.get("amount")), paymentMode: mode,
+    const r = await run(() => createDraft({ entityType: "expense", endpoint: "/api/expenses", title: "مصروف (أوفلاين)", payload: { docDate: String(f.get("date")), categoryId: String(f.get("cat")), description: String(f.get("desc")), currency: cur, exchangeRate: cur === "USD" ? String(f.get("rate") || "") || null : null, amount: String(f.get("amount")), paymentMode: mode,
       cashAccountId: mode === "PAID_CASH" ? String(f.get("cash")) : null, partnerTreatment: mode === "PAID_BY_PARTNER" ? treat : null, settlementNote: mode === "PAID_BY_PARTNER" && treat === "OFFSET_AGAINST_ADVANCES" ? String(f.get("note")) : null } }), "حُفظت المسودة");
+    if (r?.mode === "queued") setMsg({ t: "ok", m: "📴 حُفظت على جهازك مشفّرة وبانتظار المزامنة — ستُرسل تلقائياً عند عودة الاتصال (تابعها من «المزامنة»)." });
   }
   const mainCash = cash.filter((c) => c.kind !== "PARTNER_CUSTODY");
   return (<>

@@ -472,3 +472,11 @@ export async function convertQuote(tx: Tx, who: Principal, actor: Actor, id: str
   return inv;
 }
 void forbidden;
+
+export async function getDelivery(tx: Tx, id: string) {
+  const [h] = await tx`SELECT dn.id, dn.doc_no AS "docNo", dn.draft_ref AS "draftRef", dn.doc_date::text AS "docDate", si.doc_no AS "invoiceNo", c.name AS "customerName", dn.recipient_note AS "recipientNote", dn.status
+    FROM delivery_notes dn JOIN sales_invoices si ON si.id = dn.invoice_id JOIN contacts c ON c.id = si.customer_id WHERE dn.id = ${id}`;
+  if (!h) throw notFound();
+  const lines = await tx`SELECT p.code AS "productCode", p.name AS "productName", sl.uom, dl.qty_base::text AS "qtyBase" FROM delivery_lines dl JOIN sales_lines sl ON sl.id = dl.sales_line_id JOIN products p ON p.id = sl.product_id WHERE dl.delivery_id = ${id} ORDER BY dl.line_no`;
+  return { ...h, lines };
+}

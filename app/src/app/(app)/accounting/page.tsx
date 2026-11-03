@@ -8,6 +8,7 @@ export default function Accounting() {
   const tb = useLoad<TB | null>("/api/reports/trial-balance", null), j = useLoad<J[]>("/api/journal", []);
   return (<>
     <h1>المحاسبة</h1>
+    <p style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><a href="/api/export/trial-balance"><button>⬇ ميزان المراجعة Excel</button></a><a href="/print/report/trial-balance" target="_blank" rel="noreferrer"><button>طباعة / PDF</button></a><a href="/api/export/journal"><button>⬇ القيود Excel</button></a></p>
     {tb.err && <div className="msg err">{tb.err}</div>}
     {tb.data && <><div className="grid"><div className="card stat"><div className="label">إجمالي المدين</div><div className="value"><span className="num">{money(tb.data.totalDebit)}</span></div></div>
       <div className="card stat"><div className="label">إجمالي الدائن</div><div className="value"><span className="num">{money(tb.data.totalCredit)}</span></div></div>

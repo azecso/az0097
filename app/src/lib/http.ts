@@ -32,6 +32,19 @@ export function fail(e: unknown) {
   return json({ error: { code: "INTERNAL", message: "خطأ داخلي" } }, 500);
 }
 
+/** Session + rate limit + (for mutations) Origin & CSRF checks. For routes that run several transactions themselves. */
+export async function authenticate(req: NextRequest) {
+  const s = await resolveSession(req.cookies.get(SESSION_COOKIE)?.value);
+  if (!s) throw unauthorized();
+  if (!rateLimit(`api:${s.principal.userId}`, Number(process.env.API_RATE_LIMIT ?? 300), 60_000)) throw new AppError(429, "RATE_LIMITED", "طلبات كثيرة");
+  if (MUTATING.has(req.method)) {
+    if (!sameOrigin(req)) throw forbidden("BAD_ORIGIN");
+    const t = req.headers.get("x-csrf-token");
+    if (!t || !safeEqual(t, s.csrf)) throw forbidden("BAD_CSRF");
+  }
+  return s.principal;
+}
+
 type Route = (req: NextRequest, c: { params: Promise<Record<string, string>> }) => Promise<NextResponse>;
 
 /** Authenticated route: session → CSRF (mutations) → permission → tenant-scoped transaction. */

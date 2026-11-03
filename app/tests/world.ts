@@ -164,3 +164,9 @@ export async function sell(w: World, product: string, loc: string, qty: string):
     return out.cost.toString();
   });
 }
+
+export const uid = () => crypto.randomUUID();
+/** Builds one sync operation the way a device would. */
+export const op = (o: { entity: string; kind: "CREATE_DRAFT" | "UPDATE_DRAFT" | "SUBMIT_FOR_POSTING"; local: string; payload?: Record<string, unknown>; base?: number; key?: string; id?: string }) => ({
+  operationId: o.id ?? uid(), idempotencyKey: o.key ?? "k-" + uid(), entityType: o.entity, entityLocalId: o.local, op: o.kind, baseVersion: o.base ?? null, payload: o.payload ?? {}, clientCreatedAt: new Date().toISOString(),
+});

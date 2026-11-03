@@ -19,6 +19,7 @@ export default function Quotes() {
           {q.status === "DRAFT" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/sales-quotes/${q.id}`, { method: "DELETE" }), "حُذفت المسودة")}>حذف</button>}
           {q.status === "SENT" && <><button disabled={busy} onClick={() => run(() => api(`/api/sales-quotes/${q.id}/status`, { method: "POST", body: { status: "ACCEPTED" } }), "قُبل العرض")}>مقبول</button><button disabled={busy} onClick={() => run(() => api(`/api/sales-quotes/${q.id}/status`, { method: "POST", body: { status: "REJECTED" } }), "رُفض العرض")}>مرفوض</button></>}
           {(q.status === "SENT" || q.status === "ACCEPTED") && can(me, "sales:create") && <button disabled={busy} onClick={async () => { const r = await run(() => api<{ id: string }>(`/api/sales-quotes/${q.id}/convert`, { method: "POST", body: { saleType: "CREDIT", docDate: today() } }), "حُوِّل إلى فاتورة (مسودة)"); if (r) router.push(`/sales/${r.id}`); }}>تحويل لفاتورة</button>}
+          <a href={`/print/sales-quote/${q.id}`} target="_blank" rel="noreferrer"><button>طباعة</button></a>
           {q.invoiceId && <Link href={`/sales/${q.invoiceId}`}><button>الفاتورة</button></Link>}</td></tr>)}
         {data.length === 0 && <tr><td colSpan={6}>لا توجد عروض</td></tr>}</tbody></table></div></>);
 }

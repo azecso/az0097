@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import Decimal from "decimal.js";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
@@ -41,7 +42,7 @@ export default function Partners() {
         <tr><td><strong>الربح القابل للتوزيع</strong></td><td><strong className="num">{money(pv.distributable)}</strong></td></tr><tr><td>المالك / الشريك</td><td><span className="num">{money(pv.ownerShare)} / {money(pv.partnerShare)}</span></td></tr>
         <tr><td>خسارة مرحّلة للفترة التالية</td><td><span className="num">{money(pv.lossCarriedOut)}</span></td></tr></tbody></table>}
       {pv && pv.lines.length > 0 && <div className="cards-as-list" style={{ overflowX: "auto" }}><table><thead><tr><th>الفاتورة</th><th>الربح المعدّل</th><th>نسبة التحصيل</th><th>المؤهل</th><th>أُفرج سابقاً</th><th>الجديد</th></tr></thead>
-        <tbody>{pv.lines.map((l) => <tr key={l.docNo}><td><span className="num">{l.docNo}</span></td><td><span className="num">{money(l.adjustedProfit)}</span></td><td><span className="num">{(Number(l.ratio) * 100).toFixed(2)}%</span></td><td><span className="num">{money(l.linked)}</span></td><td><span className="num">{money(l.before)}</span></td><td><span className="num">{money(l.newly)}</span></td></tr>)}</tbody></table></div>}
+        <tbody>{pv.lines.map((l) => <tr key={l.docNo}><td><span className="num">{l.docNo}</span></td><td><span className="num">{money(l.adjustedProfit)}</span></td><td><span className="num">{new Decimal(l.ratio).mul(100).toDecimalPlaces(2).toString()}%</span></td><td><span className="num">{money(l.linked)}</span></td><td><span className="num">{money(l.before)}</span></td><td><span className="num">{money(l.newly)}</span></td></tr>)}</tbody></table></div>}
     </div>
     <h2>2) التسويات</h2>
     <div className="card cards-as-list"><table><thead><tr><th>الرقم</th><th>الفترة</th><th>القابل للتوزيع</th><th>الحصص (مدفوع/الحصة)</th><th>الحالة</th><th></th></tr></thead>

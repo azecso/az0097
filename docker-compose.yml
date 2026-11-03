@@ -35,8 +35,11 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       APP_SECRET: ${APP_SECRET:?set in .env}
       REQUIRE_OWNER_2FA: ${REQUIRE_OWNER_2FA:-true}
+      UPLOAD_DIR: /data/uploads
+      CHROMIUM_PATH: /usr/bin/chromium-browser
     read_only: true
     tmpfs: [/tmp]
+    volumes: [uploads:/data/uploads]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     networks: [internal, edge]
@@ -53,4 +56,4 @@ services:
 networks:
   internal: { internal: true }
   edge: {}
-volumes: { pgdata: {}, caddy_data: {}, caddy_config: {} }
+volumes: { pgdata: {}, caddy_data: {}, caddy_config: {}, uploads: {} }
