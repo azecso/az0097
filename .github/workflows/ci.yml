@@ -21,6 +21,11 @@ jobs:
       - run: npm run lint            # no float money, no ON DELETE CASCADE, typecheck
       - run: npm test                # migrations + RBAC + RLS + auth + FX + numbering against real PostgreSQL
       - run: npm run build
+      - name: Dependency audit (report only; see docs/phase-6/REPORT.md)
+        run: npm audit --omit=dev --audit-level=critical
+      - name: Ops scripts syntax
+        working-directory: ops
+        run: for f in *.sh; do bash -n "$f"; done
       - name: Phase 0 schema invariants
         working-directory: docs/phase-0/schema
         env: { PGHOST: 127.0.0.1, PGUSER: postgres, PGPASSWORD: postgres, PGDATABASE: erp_phase0 }
@@ -28,6 +33,28 @@ jobs:
           createdb erp_phase0
           ./run-tests.sh | tee out.txt
           grep -q "FAIL" out.txt && exit 1 || true
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    defaults: { run: { working-directory: app } }
+    env:
+      E2E_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: app/package-lock.json }
+      - run: npm ci
+      - run: npx playwright-core install chromium --with-deps
+      - name: Browser end-to-end
+        run: |
+          export CHROMIUM_PATH="$(node -e "console.log(require('playwright-core').chromium.executablePath())")"
+          npm run e2e
   secrets:
     runs-on: ubuntu-latest
     steps:

@@ -3,7 +3,9 @@
 نظام ويب عربي (RTL) لإدارة المبيعات والمشتريات والمخزون ورأس المال والشراكة 50/50.
 المتطلبات: [SRS](docs/phase-0/README.md) — التصميم المعتمد في `docs/phase-0`، وتقرير التنفيذ في [`docs/phase-1/REPORT.md`](docs/phase-1/REPORT.md).
 
-**الحالة:** Phase 1 (الأساس) و**Phase 2** (المواد/المشتريات/المخزون FIFO) منجزتان — تقرير Phase 2: [`docs/phase-2/REPORT.md`](docs/phase-2/REPORT.md) — وبانتظار الاعتماد. المراحل 3–6 لم تبدأ.
+**الحالة:** المراحل 0–6 منجزة (تقارير في `docs/phase-1` … `docs/phase-6`). **لم يُنشر بعد على Staging** ولم تُشغَّل صورة Docker هنا — راجع [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) لمصفوفة القبول والفجوات المعروفة.
+
+الوثائق: [`RUNBOOK`](docs/RUNBOOK.md) (تشغيل/نسخ/استعادة) · [`DEPLOYMENT`](docs/DEPLOYMENT.md) (VPS) · [`SECURITY`](docs/SECURITY.md) · [`ACCEPTANCE`](docs/ACCEPTANCE.md).
 
 ## المكوّنات
 | المسار | المحتوى |
@@ -12,6 +14,8 @@
 | `app/db/migrations/` | ترحيلات SQL (تُطبَّق بالترتيب مع checksum) |
 | `app/tests/` | اختبارات تكامل على PostgreSQL حقيقي |
 | `ops/`, `docker-compose.yml` | Caddy (HTTPS) ← التطبيق ← PostgreSQL |
+| `app/e2e/` | اختبارات متصفح (Playwright): `npm run e2e` (تحتاج `E2E_ADMIN_URL` و`CHROMIUM_PATH`) |
+| `ops/` | نسخ احتياطي مشفّر، استعادة، اختبار استعادة |
 | `docs/phase-0/` | ADR، ERD، التصميم المحاسبي، الاختبارات |
 
 ## التشغيل بـ Docker
@@ -39,7 +43,7 @@ npm run lint           # يمنع float للمال، ON DELETE CASCADE، ويف�
 
 ## التراجع (Rollback)
 - التطبيق: `git checkout <الإصدار السابق> && docker compose up -d --build`.
-- قاعدة البيانات: الترحيلات للأمام فقط (forward-only)؛ قبل أي ترحيل جديد على بيانات حقيقية خذ نسخة (`pg_dump`) — النسخ الاحتياطي الآلي المشفّر خارج الخادم يُنجز في Phase 6.
+- قاعدة البيانات: الترحيلات للأمام فقط (forward-only)؛ قبل أي ترحيل جديد على بيانات حقيقية خذ نسخة (`pg_dump`) — النسخ المشفّر: `ops/backup.sh` (انظر RUNBOOK).
 - بيئة تجريبية كاملة: `docker compose down -v` (يحذف بيانات التجربة).
 
 ## الأمن (ما هو مفعّل الآن)

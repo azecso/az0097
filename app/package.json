@@ -11,7 +11,9 @@
     "lint": "node scripts/lint-money.mjs && tsc --noEmit",
     "migrate": "tsx scripts/migrate.ts",
     "bootstrap": "tsx scripts/bootstrap.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "bash e2e/run.sh",
+    "reset-access": "tsx scripts/reset-access.ts"
   },
   "dependencies": {
     "@fontsource/cairo": "^5.3.0",

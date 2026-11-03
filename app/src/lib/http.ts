@@ -26,9 +26,12 @@ export function fail(e: unknown) {
   if (e instanceof AppError) return json({ error: { code: e.code, message: e.message } }, e.status);
   if (e instanceof ZodError) return json({ error: { code: "VALIDATION", message: "بيانات غير صالحة", issues: e.issues.map((i) => ({ path: i.path.join("."), message: i.message })) } }, 400);
   const pg = e as { code?: string; constraint_name?: string; message?: string };
+  if (pg?.code === "22P02") return json({ error: { code: "INVALID_ID", message: "معرّف أو قيمة غير صالحة" } }, 400);
+  if (pg?.code === "22003") return json({ error: { code: "AMOUNT_TOO_LARGE", message: "القيمة أكبر من المسموح" } }, 400);
   if (pg?.code === "23505") return json({ error: { code: "DUPLICATE", message: "القيمة موجودة مسبقاً" } }, 409);
   if (pg?.code === "P0001" && pg.message) return json({ error: { code: pg.message.split(/\s/)[0], message: "رفضت قاعدة البيانات العملية" } }, 409);
-  console.error("[unhandled]", e);
+  const x = e as { code?: string; name?: string; message?: string };
+  console.error(JSON.stringify({ level: "error", at: new Date().toISOString(), name: x?.name, code: x?.code, message: String(x?.message ?? "").slice(0, 300) }));   // never the SQL parameters / request body
   return json({ error: { code: "INTERNAL", message: "خطأ داخلي" } }, 500);
 }
 
