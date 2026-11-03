@@ -70,9 +70,7 @@ describe("company settings", () => {
     const g = (await call(co.GET, { session: owner })).body;
     const u = await call(co.PATCH, { method: "PATCH", session: owner, body: { name: "شركة الاختبار المحدثة", phones: ["07700000000"], allowNegativeStock: false, landedCostPolicy: "EXCLUDE", version: g.version } });
     expect(u.status).toBe(200); expect(u.body.version).toBe(g.version + 1);
-    const inc = await call(co.PATCH, { method: "PATCH", session: owner, body: { name: "شركة", phones: [], landedCostPolicy: "INCLUDE", version: u.body.version } });
-    expect(inc.body.error.code).toBe("NOT_IMPLEMENTED");                  // unimplemented accounting policies are refused, not ignored
-    const neg = await call(co.PATCH, { method: "PATCH", session: owner, body: { name: "شركة", phones: [], allowNegativeStock: true, version: u.body.version } });
+    const neg = await call(co.PATCH, { method: "PATCH", session: owner, body: { name: "شركة", phones: [], allowNegativeStock: true, version: u.body.version } });  // negative stock is still unsupported
     expect(neg.body.error.code).toBe("NOT_IMPLEMENTED");
     const stale = await call(co.PATCH, { method: "PATCH", session: owner, body: { name: "x1", phones: [], version: g.version } });
     expect(stale.status).toBe(409);

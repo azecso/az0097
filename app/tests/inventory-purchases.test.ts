@@ -190,3 +190,69 @@ describe("physical count and permissions", () => {
     await expectFail(w.inject((tx) => tx`UPDATE stock_lots SET qty_remaining = -1`), /check constraint/);
   });
 });
+
+describe("landed costs: transport inside or outside inventory cost (configurable)", () => {
+  const withCharge = (P: string, charge: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    w.api(w.owner, w.R.purchases.POST, { method: "POST", body: { supplierId: w.ids.supplier, docDate: "2026-11-01", paymentType: "CREDIT", currency: "IQD", lines: [{ productId: P, uom: "قطعة", qty: "100", unitPrice: "10000" }], charges: [charge], ...extra } });
+  const post = (id: string) => w.api(w.owner, w.R.purchasePost, { method: "POST", params: { id } });
+  const unitCost = async (P: string) => (await w.api(w.owner, w.R.lots, { params: { id: P } })).body.map((l: any) => Number(l.unitCostBase));
+
+  it("capitalised transport raises the layer cost; the payable includes it; nothing is expensed", async () => {
+    const P = await w.mkProduct("LC1");
+    const before = await w.tb();
+    const c = await withCharge(P, { kind: "TRANSPORT", amount: "50000", capitalize: true });
+    const r = await post(c.body.id); expect(r.status).toBe(200);
+    expect(await unitCost(P)).toEqual([10500]);                           // (1,000,000 + 50,000) / 100
+    const tb = await w.tb();
+    expect(bal(tb, "1300") - bal(before, "1300")).toBe(1050000);
+    expect(bal(tb, "6100") - bal(before, "6100")).toBe(0);
+    expect(-bal(tb, "2100") - -bal(before, "2100")).toBe(1050000);        // supplier is owed goods + freight
+    expect((await w.recon()).ok).toBe(true); expect(tb.balanced).toBe(true);
+  });
+  it("expensed transport leaves the layer at the goods price and books 6100", async () => {
+    const P = await w.mkProduct("LC2");
+    const before = await w.tb();
+    const r = await post((await withCharge(P, { kind: "TRANSPORT", amount: "50000", capitalize: false })).body.id); expect(r.status).toBe(200);
+    expect(await unitCost(P)).toEqual([10000]);
+    const tb = await w.tb();
+    expect(bal(tb, "6100") - bal(before, "6100")).toBe(50000);
+    expect(bal(tb, "1300") - bal(before, "1300")).toBe(1000000);
+    expect(-bal(tb, "2100") - -bal(before, "2100")).toBe(1050000);
+    expect((await w.recon()).ok).toBe(true); expect(tb.balanced).toBe(true);
+  });
+  it("company policy INCLUDE makes charges capitalised by default; EXCLUDE expenses them", async () => {
+    const co = await import("@/app/api/company/route");
+    const patch = async (policy: string) => { const g = (await w.api(w.owner, co.GET)).body; return w.api(w.owner, co.PATCH, { method: "PATCH", body: { name: g.name, phones: [], allowNegativeStock: false, landedCostPolicy: policy, version: g.version } }); };
+    expect((await patch("INCLUDE")).status).toBe(200);
+    const P = await w.mkProduct("LC3");
+    await post((await withCharge(P, { kind: "TRANSPORT", amount: "50000" })).body.id);
+    expect(await unitCost(P)).toEqual([10500]);
+    expect((await patch("EXCLUDE")).status).toBe(200);
+    const P2 = await w.mkProduct("LC4");
+    await post((await withCharge(P2, { kind: "TRANSPORT", amount: "50000" })).body.id);
+    expect(await unitCost(P2)).toEqual([10000]);
+  });
+  it("capitalised charge is spread pro-rata over several lines with no lost dinar", async () => {
+    const A = await w.mkProduct("LC5A"), B = await w.mkProduct("LC5B");
+    const c = await w.api(w.owner, w.R.purchases.POST, { method: "POST", body: { supplierId: w.ids.supplier, docDate: "2026-11-02", paymentType: "CREDIT", currency: "IQD",
+      lines: [{ productId: A, uom: "قطعة", qty: "1", unitPrice: "1000" }, { productId: B, uom: "قطعة", qty: "1", unitPrice: "2000" }], charges: [{ kind: "CUSTOMS", amount: "100", capitalize: true }] } });
+    await post(c.body.id);
+    expect(await unitCost(A)).toEqual([1033]); expect(await unitCost(B)).toEqual([2067]);       // 33 + 67 = 100
+    expect((await w.recon()).ok).toBe(true); expect((await w.tb()).balanced).toBe(true);
+  });
+  it("a supplier return from a landed-cost layer takes back the landed cost too; reversal restores the books", async () => {
+    const P = await w.mkProduct("LC6");
+    const c = await withCharge(P, { kind: "TRANSPORT", amount: "50000", capitalize: true }); await post(c.body.id);
+    const g = (await w.api(w.owner, w.R.purchaseId.GET, { params: { id: c.body.id } })).body;
+    const d = await w.api(w.owner, w.R.returns.POST, { method: "POST", body: { purchaseId: c.body.id, docDate: "2026-11-03", settlement: "REDUCE_PAYABLE", reason: "اختبار", lines: [{ purchaseLineId: g.lines[0].id, qtyBase: "100" }] } });
+    const r = await w.api(w.owner, w.R.returnPost, { method: "POST", params: { id: d.body.id } });
+    expect(r.body.totalBase).toBe("1050000");                              // goods + freight
+    expect((await w.recon()).ok).toBe(true);
+    const P2 = await w.mkProduct("LC7");
+    const c2 = await withCharge(P2, { kind: "OTHER", amount: "1234", capitalize: false }); const p2 = await post(c2.body.id);
+    const before = await w.tb();
+    expect((await w.api(w.owner, w.R.purchaseReverse, { method: "POST", params: { id: c2.body.id }, body: { reason: "اختبار" } })).status).toBe(200);
+    const after = await w.tb();
+    expect(bal(after, "6900") - bal(before, "6900")).toBe(-1234); expect(after.balanced).toBe(true); void p2;
+  });
+});

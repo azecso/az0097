@@ -19,7 +19,6 @@ export const companySchema = z.object({
 });
 export async function updateCompany(tx: Tx, who: Principal, actor: Actor, i: z.infer<typeof companySchema>) {
   // Not implemented yet: refuse instead of silently ignoring a setting that would change accounting results.
-  if (i.landedCostPolicy === "INCLUDE") throw badRequest("NOT_IMPLEMENTED", "تحميل التكاليف الإضافية على المخزون غير مفعّل بعد؛ السياسة الحالية: سعر شراء المادة فقط");
   if (i.allowNegativeStock) throw badRequest("NOT_IMPLEMENTED", "المخزون السالب غير مدعوم؛ النظام يمنع الرصيد السالب");
   const before = await getCompany(tx);
   if (before.version !== i.version) throw conflict("VERSION_CONFLICT", "تم تعديل بيانات الشركة من جهة أخرى");

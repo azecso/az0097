@@ -6,7 +6,7 @@ import { can, useMe } from "@/components/me";
 import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
 
 interface Line { id: string; lineNo: number; productCode: string; productName: string; uom: string; qty: string; qtyBase: string; unitPrice: string; lineTotal: string; lineTotalBase: string }
-interface Doc { id: string; docNo: string | null; draftRef: string; docDate: string; supplierName: string; paymentType: string; currency: string; exchangeRate: string; total: string; totalBase: string; status: string; version: number; lines: Line[]; paid?: string; returned?: string; outstanding?: string; supplierInvoiceNo: string | null; cashAccountId: string | null }
+interface Doc { id: string; docNo: string | null; draftRef: string; docDate: string; supplierName: string; paymentType: string; currency: string; exchangeRate: string; total: string; totalBase: string; status: string; version: number; lines: Line[]; charges: { kind: string; description: string | null; amount: string; capitalize: boolean }[]; paid?: string; returned?: string; outstanding?: string; supplierInvoiceNo: string | null; cashAccountId: string | null }
 export default function PurchaseView() {
   const { id } = useParams<{ id: string }>(); const router = useRouter(); const me = useMe();
   const { data: d, reload, err } = useLoad<Doc | null>(`/api/purchases/${id}`, null); const { msg, busy, run } = useAction(reload);
@@ -26,6 +26,7 @@ export default function PurchaseView() {
     <div className="card cards-as-list" style={{ marginTop: 12 }}><table><thead><tr><th>#</th><th>المادة</th><th>الكمية</th><th>الكمية الأساسية</th><th>السعر</th><th>الإجمالي</th></tr></thead>
       <tbody>{d.lines.map((l) => <tr key={l.id}><td>{l.lineNo}</td><td>{l.productCode} — {l.productName}</td><td><span className="num">{money(l.qty)} {l.uom}</span></td><td><span className="num">{money(l.qtyBase)}</span></td>
         <td><span className="num">{money(l.unitPrice)}</span></td><td><span className="num">{money(l.lineTotal)}</span></td></tr>)}</tbody></table></div>
+    {d.charges.length > 0 && <div className="card" style={{ marginTop: 12 }}><h2>تكاليف إضافية</h2><table><tbody>{d.charges.map((c, i) => <tr key={i}><td>{{ TRANSPORT: "نقل", LOADING: "تحميل", CUSTOMS: "جمارك", OTHER: "أخرى" }[c.kind]} {c.description}</td><td><span className="num">{money(c.amount)} {d.currency}</span></td><td>{c.capitalize ? "ضمن كلفة المخزون" : "مصروف"}</td></tr>)}</tbody></table></div>}
     <MsgBox msg={msg} />
     <p style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
       {d.status === "DRAFT" && can(me, "purchase:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/purchases/${id}/post`, { method: "POST" }), "تم الترحيل وإصدار الرقم النهائي")}>ترحيل</button>}
