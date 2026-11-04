@@ -168,3 +168,13 @@ describe("customer summary and credit-aware invoice list", () => {
     expect(all.rows.length).toBeGreaterThanOrEqual(2); expect(all.totals.every((t: any) => Number(t.sales) >= Number(t.paid))).toBe(true);
   });
 });
+
+describe("draft payroll accrual can be deleted (regression: was an internal error for lack of DELETE grant)", () => {
+  it("generates a month then deletes the draft accrual", async () => {
+    const emp = await w.api(w.owner, w.R.employees.POST, { method: "POST", body: { name: "موظف الحذف", monthlySalary: "300000", currency: "IQD" } }); expect(emp.status).toBe(200);
+    const g = await w.api(w.owner, w.R.payroll.POST, { method: "POST", body: { month: "2026-11" } }); expect(g.status).toBe(200); expect(g.body.created).toBeGreaterThanOrEqual(1);
+    const acc = (await w.api(w.owner, w.R.payroll.GET, { path: "/api/payroll?month=2026-11" } as any)).body.find((a: any) => a.status === "DRAFT");
+    const del = await w.api(w.owner, w.R.payrollId.DELETE, { method: "DELETE", params: { id: acc.id } }); expect(del.status).toBe(200);
+    const again = (await w.api(w.owner, w.R.payroll.GET, { path: "/api/payroll?month=2026-11" } as any)).body.filter((a: any) => a.id === acc.id); expect(again.length).toBe(0);
+  });
+});

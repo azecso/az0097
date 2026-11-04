@@ -75,6 +75,11 @@ let P; const BASE = process.env.E2E_BASE || "http://localhost:3100";
   ok("print page renders the same report", (await rp.textContent("body")).includes("تقرير المشتريات") && (await rp.textContent("body")).includes("SGR")); await rp.close();
   await p.click("button[role=tab]:has-text('الدائنون')"); await p.check("text=ملخص لكل جهة"); await p.waitForSelector("tbody td:has-text('مورد سريع')"); ok("creditors summary lists the new supplier with the balance", true);
   await p.click("button[role=tab]:has-text('حركة صنف')"); await p.selectOption("#m", { index: 1 }); await p.waitForSelector("tbody td:has-text('PURCHASE_IN')"); ok("item movement shows the purchase receipt", true);
+  await p.setViewportSize({ width: 390, height: 800 }); await p.goto(B + "/purchases"); await wait("tbody tr.clickrow td[data-label]");
+  ok("phone: every list cell carries its column title", (await p.$$eval("tbody tr.clickrow td", (tds) => tds.filter((t) => t.textContent.trim() && !t.getAttribute("data-label")).length)) === 0);
+  ok("phone: table header hidden, rows are cards", await p.$eval("thead", (h) => getComputedStyle(h).display === "none") && (await p.$eval("tbody tr.clickrow", (r) => getComputedStyle(r).borderRadius)) !== "0px");
+  await p.screenshot({ path: "mobile-purchases.png", fullPage: true });
+  await p.goto(B + "/capital/returns"); await wait("h1"); await p.screenshot({ path: "mobile-returns.png", fullPage: true });
   for (const path of ["/reports", "/capital/returns"]) { await p.setViewportSize({ width: 390, height: 800 }); await p.goto(B + path); await wait("h1"); ok("mobile " + path + ": no horizontal scroll", await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)); }
   ok("no console/page errors", errs.length === 0); if (errs.length) out.push("ERRORS: " + errs.slice(0, 5).join(" | "));
   console.log(out.join("\n")); await b.close();

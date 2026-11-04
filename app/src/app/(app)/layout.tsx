@@ -21,6 +21,17 @@ const NAV = [
 ];
 
 export default function Shell({ children }: { children: React.ReactNode }) {
+  // Give every table cell its column title so the phone layout (one card per row) can show "what is this number".
+  useEffect(() => {
+    let raf = 0;
+    const label = () => document.querySelectorAll(".cards-as-list table").forEach((t) => {
+      const heads = Array.from(t.querySelectorAll("thead th")).map((h) => h.textContent?.trim() ?? "");
+      t.querySelectorAll("tbody tr, tfoot tr").forEach((tr) => Array.from(tr.children).forEach((c, i) => { if (c.tagName === "TD" && heads[i] && !c.hasAttribute("colspan") && c.getAttribute("data-label") !== heads[i]) c.setAttribute("data-label", heads[i]!); }));
+    });
+    const mo = new MutationObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(label); });
+    mo.observe(document.body, { childList: true, subtree: true }); label();
+    return () => { mo.disconnect(); cancelAnimationFrame(raf); };
+  }, []);
   const [me, setMe] = useState<Me | null>(null); const path = usePathname(); const router = useRouter(); const off = useOffline(); const [fromCache, setFromCache] = useState(false); const [pin, setPin] = useState(""); const [pinErr, setPinErr] = useState(""); const [update, setUpdate] = useState<ServiceWorkerRegistration | null>(null);
   // The identity/permission list is not secret (the server re-checks every request). It is cached so the shell can open offline.
   const loadMe = useCallback(async () => {
