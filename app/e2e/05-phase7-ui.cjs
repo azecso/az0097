@@ -79,6 +79,12 @@ let P; const BASE = process.env.E2E_BASE || "http://localhost:3100";
   ok("phone: every list cell carries its column title", (await p.$$eval("tbody tr.clickrow td", (tds) => tds.filter((t) => t.textContent.trim() && !t.getAttribute("data-label")).length)) === 0);
   ok("phone: table header hidden, rows are cards", await p.$eval("thead", (h) => getComputedStyle(h).display === "none") && (await p.$eval("tbody tr.clickrow", (r) => getComputedStyle(r).borderRadius)) !== "0px");
   await p.screenshot({ path: "mobile-purchases.png", fullPage: true });
+  await p.click("button.tabmore"); await p.waitForSelector("#phone-menu a:has-text('التقارير')");
+  const links = await p.$$eval("#phone-menu a", (a) => a.map((x) => x.textContent));
+  ok("phone menu lists every section the user may open (reports, expenses, partners, inventory...)", ["التقارير", "المصاريف", "المخزون", "الشراكة والأرباح", "المحاسبة"].every((t) => links.includes(t)));
+  await p.screenshot({ path: "mobile-menu.png" });
+  await p.click("#phone-menu a:has-text('التقارير')"); await p.waitForURL(/\/reports/); await p.waitForSelector("h1:has-text('التقارير')");
+  ok("choosing a section navigates and closes the menu", (await p.$$("#phone-menu")).length === 0);
   await p.goto(B + "/capital/returns"); await wait("h1"); await p.screenshot({ path: "mobile-returns.png", fullPage: true });
   for (const path of ["/reports", "/capital/returns"]) { await p.setViewportSize({ width: 390, height: 800 }); await p.goto(B + path); await wait("h1"); ok("mobile " + path + ": no horizontal scroll", await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)); }
   ok("no console/page errors", errs.length === 0); if (errs.length) out.push("ERRORS: " + errs.slice(0, 5).join(" | "));

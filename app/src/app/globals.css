@@ -35,7 +35,7 @@ table { width: 100%; border-collapse: collapse; } th, td { text-align: start; pa
 .tabbar { display: none; }
 @media (max-width: 800px) {
   .shell { grid-template-columns: 1fr; } .side { display: none; }
-  .tabbar { display: grid; grid-template-columns: repeat(4, 1fr); position: fixed; inset-inline: 0; bottom: 0; background: var(--surface); border-block-start: 1px solid var(--border); }
+  .tabbar { display: grid; grid-template-columns: repeat(5, 1fr); z-index: 70; position: fixed; inset-inline: 0; bottom: 0; background: var(--surface); border-block-start: 1px solid var(--border); }
   .tabbar a { padding: 10px 4px; text-align: center; font-size: 13px; min-height: 56px; display: grid; place-items: center; }
   /* Tables become one card per row; every cell shows its column title (data-label is filled by the layout from <thead>). */
   .cards-as-list table, .cards-as-list tbody, .cards-as-list tfoot { display: block; width: 100%; } .cards-as-list thead { display: none; }
@@ -74,3 +74,11 @@ table { width: 100%; border-collapse: collapse; } th, td { text-align: start; pa
 .paidrow { background: rgba(46,160,67,.13); } .paidrow:hover { background: rgba(46,160,67,.2); } .paytag { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:600; } .paytag.paid { background: rgba(46,160,67,.25); color: #176b2c; } .paytag.partial { background: rgba(230,160,0,.22); color: #8a5a00; } .paytag.unpaid { background: rgba(0,0,0,.06); }
 @media (prefers-color-scheme: dark) { .paytag.paid { color: #7ee2a0; } .paytag.partial { color: #ffd479; } }
 @media screen and (max-width: 800px) { body { padding-bottom: 76px; } }   /* keep the last card clear of the fixed bottom tab bar (screen only: A4 PDFs are < 800px wide too) */
+
+.tabmore { border: 0; background: transparent; font: inherit; font-size: 13px; font-weight: 700; color: var(--accent); min-height: 56px; }
+.drawer { display: none; }
+@media screen and (max-width: 800px) {
+  .drawer { display: block; position: fixed; inset: 0; z-index: 60; overflow-y: auto; padding: 16px 16px 96px; background: var(--bg, var(--surface)); }
+  .drawer a { display: block; padding: 14px 12px; border-bottom: 1px solid var(--border); font-size: 16px; } .drawer a[aria-current="page"] { font-weight: 700; color: var(--accent); }
+}
+@media (min-width: 801px) { .tabmore { display: none; } }

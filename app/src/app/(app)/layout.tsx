@@ -32,6 +32,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     mo.observe(document.body, { childList: true, subtree: true }); label();
     return () => { mo.disconnect(); cancelAnimationFrame(raf); };
   }, []);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [bootError, setBootError] = useState(""); const [slow, setSlow] = useState(false); const [health, setHealth] = useState("");
   const [me, setMe] = useState<Me | null>(null); const path = usePathname(); const router = useRouter(); const off = useOffline(); const [fromCache, setFromCache] = useState(false); const [pin, setPin] = useState(""); const [pinErr, setPinErr] = useState(""); const [update, setUpdate] = useState<ServiceWorkerRegistration | null>(null);
   // The identity/permission list is not secret (the server re-checks every request). It is cached so the shell can open offline.
@@ -62,6 +63,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       navigator.serviceWorker.addEventListener("controllerchange", () => { if (hadController && !reloaded) { reloaded = true; window.location.reload(); } });   // only for UPDATES, never for the first install
     }
   }, []);
+  useEffect(() => { setMenuOpen(false); }, [path]);                 // leaving a page closes the phone menu
   useEffect(() => {          // still loading after 6 s: probe the server so the user sees WHY (sleeping host, database down...)
     if (me) { setSlow(false); return; }
     const t = setTimeout(async () => { setSlow(true); try { const r = await fetch("/api/health", { cache: "no-store", signal: AbortSignal.timeout(8000) }); const j = await r.json().catch(() => null); setHealth(r.ok && j?.ok ? "الخادم يعمل وقاعدة البيانات متصلة" : "الخادم يعمل لكن قاعدة البيانات غير متاحة"); } catch { setHealth("الخادم لا يستجيب (قد يكون في وضع الإسبات أو يُعاد تشغيله)"); } }, 6000);
@@ -94,7 +96,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           {!off.online && <div className="msg" role="status">📴 وضع أوفلاين: تُحفظ المسودات على جهازك مشفّرة، ولا يصدر رقم نهائي ولا يُرحَّل شيء ولا يُخصم مخزون إلا بعد تحقق الخادم.</div>}
           {children}
         </div>
-        <nav className="tabbar" aria-label="تنقل سريع">{items.slice(0, 4).map((n) => <Link key={n.href} href={n.href}>{n.label}</Link>)}</nav>
+        <nav className="tabbar" aria-label="تنقل سريع">{items.slice(0, 4).map((n) => <Link key={n.href} href={n.href}>{n.label}</Link>)}
+          <button type="button" className="tabmore" aria-expanded={menuOpen} aria-controls="phone-menu" onClick={() => setMenuOpen((v) => !v)}>{menuOpen ? "✕ إغلاق" : "☰ القائمة"}</button></nav>
+        {menuOpen && <div className="drawer" id="phone-menu" role="dialog" aria-label="كل الأقسام"><strong style={{ display: "block", padding: "8px 4px 12px", fontSize: 18 }}>كل الأقسام</strong>{nav}</div>}
       </div>
     </MeCtx.Provider>
   );
