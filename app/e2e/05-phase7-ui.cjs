@@ -42,6 +42,8 @@ let P; const BASE = process.env.E2E_BASE || "http://localhost:3100";
   await p.click("button.primary:has-text('حفظ كمسودة')"); await p.waitForURL(/\/purchases\/[0-9a-f-]{36}$/); await p.waitForFunction(() => document.body.textContent.includes("30,000"));
   ok("editing the draft saves the new quantity (12 x 2,500 = 30,000)", true);
   await p.click("button.primary:has-text('ترحيل')"); await p.waitForFunction(() => document.querySelector("h1").textContent.includes("PO-")); ok("the corrected invoice posts", true);
+  await p.goto(B + "/purchases"); await wait("tfoot tr"); const lst = await p.textContent(".card");
+  ok("list shows the payment state and a totals row under the amount column", lst.includes("غير مسددة") && lst.includes("المجموع") && lst.includes("30,000"));
 
   // 2) expense category quick-create
   await p.goto(B + "/expenses"); await wait("#c");

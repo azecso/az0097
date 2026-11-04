@@ -127,10 +127,13 @@ describe("debtors report includes receipts that were not allocated to an invoice
     expect(sum.totals).toEqual([{ currency: "IQD", total: "140000" }]);
     const det = (await get(w.R.repBal, `/api/reports/balances?side=debtors&partyId=${c3}`)).body.rows;
     expect(det.map((r: any) => Number(r.outstanding)).sort((a: number, b: number) => a - b)).toEqual([-2920000, 3060000]);
+    expect(Number((await w.api(w.owner, w.R.invoices.GET)).body.find((x: any) => x.id === inv.id).outstanding)).toBe(3060000);   // an unallocated receipt does not touch the invoice itself
     // apply the credit to the invoice with a CREDIT_APPLICATION receipt: the report then shows one open invoice of 140,000
     const ap = await w.api(w.owner, w.R.receipts.POST, { method: "POST", body: { customerId: c3, docDate: "2026-07-07", kind: "CREDIT_APPLICATION", currency: "IQD", amount: "2920000", allocations: [{ invoiceId: inv.id, amount: "2920000" }] } });
     expect((await w.api(w.owner, w.R.receiptPost, { method: "POST", params: { id: ap.body.id } })).status).toBe(200);
     const after = (await get(w.R.repBal, `/api/reports/balances?side=debtors&partyId=${c3}`)).body.rows;
+    expect(Number((await w.api(w.owner, w.R.invoices.GET)).body.find((x: any) => x.id === inv.id).outstanding)).toBe(140000);
+    const pl = (await w.api(w.owner, w.R.purchases.GET)).body; expect(pl.every((x: any) => x.status !== "POSTED" || x.outstanding !== undefined)).toBe(true);
     expect(after.length).toBe(1); expect(Number(after[0].outstanding)).toBe(140000);
   });
 });

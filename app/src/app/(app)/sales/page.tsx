@@ -1,11 +1,12 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { payState, totalsByCurrency } from "@/lib/pay";
 import { money } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { StatusBadge, useLoad } from "@/components/ui";
 
-interface Row { id: string; draftRef: string; docNo: string | null; docDate: string; customerName: string; saleType: string; currency: string; net: string; status: string }
+interface Row { id: string; draftRef: string; docNo: string | null; docDate: string; customerName: string; saleType: string; currency: string; net: string; status: string; outstanding: string | null }
 export default function Sales() {
   const me = useMe(); const router = useRouter(); const { data, err } = useLoad<Row[]>("/api/sales-invoices", []);
   return (<>
@@ -16,7 +17,7 @@ export default function Sales() {
       <Link href="/sales/deliveries"><button>سندات التسليم</button></Link><Link href="/sales/returns"><button>المرتجعات</button></Link></p>
     {err && <div className="msg err">{err}</div>}
     <div className="card cards-as-list"><table><thead><tr><th>الرقم</th><th>التاريخ</th><th>العميل</th><th>النوع</th><th>الصافي</th><th>الحالة</th></tr></thead>
-      <tbody>{data.map((r) => <tr key={r.id} className="clickrow" tabIndex={0} onClick={() => router.push(`/sales/${r.id}`)} onKeyDown={(e) => { if (e.key === "Enter") router.push(`/sales/${r.id}`); }}><td><Link href={`/sales/${r.id}`}><span className="num">{r.docNo ?? r.draftRef}</span></Link></td><td><span className="num">{r.docDate}</span></td><td>{r.customerName}</td>
-        <td>{r.saleType === "CASH" ? "نقدي" : "آجل"}</td><td><span className="num">{money(r.net)} {r.currency}</span></td><td><StatusBadge s={r.status} /></td></tr>)}
-        {data.length === 0 && <tr><td colSpan={6}>لا توجد فواتير بعد</td></tr>}</tbody></table></div></>);
+      <tbody>{data.map((r) => <tr key={r.id} className={`clickrow${payState(r.status, r.net, r.outstanding)?.key === "PAID" ? " paidrow" : ""}`} tabIndex={0} onClick={() => router.push(`/sales/${r.id}`)} onKeyDown={(e) => { if (e.key === "Enter") router.push(`/sales/${r.id}`); }}><td><Link href={`/sales/${r.id}`}><span className="num">{r.docNo ?? r.draftRef}</span></Link></td><td><span className="num">{r.docDate}</span></td><td>{r.customerName}</td>
+        <td>{r.saleType === "CASH" ? "نقدي" : "آجل"}</td><td><span className="num">{money(r.net)} {r.currency}</span></td><td><StatusBadge s={r.status} />{(() => { const ps = payState(r.status, r.net, r.outstanding); return ps && <> <span className={`paytag ${ps.key.toLowerCase()}`}>{ps.key === "PAID" ? "مقبوضة" : ps.key === "PARTIAL" ? "مسدد جزئي" : "غير مسددة"}</span>{ps.key !== "UNPAID" && ps.key !== "PAID" && <span className="num"> · المتبقي {money(ps.outstanding)} {r.currency}</span>}</>; })()}</td></tr>)}
+        {data.length === 0 && <tr><td colSpan={6}>لا توجد فواتير بعد</td></tr>}</tbody><tfoot>{totalsByCurrency(data, (r) => r.net).map((t) => <tr key={t.currency} style={{ fontWeight: 700 }}><td colSpan={4}>المجموع ({t.currency}) — للمرحَّلة فقط · مقبوضة: <span className="num">{money(t.paid)}</span> · المتبقي: <span className="num">{money(t.outstanding)}</span></td><td><span className="num">{money(t.total)} {t.currency}</span></td><td></td></tr>)}</tfoot></table></div></>);
 }

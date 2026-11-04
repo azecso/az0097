@@ -120,7 +120,9 @@ export async function deleteInvoiceDraft(tx: Tx, actor: Actor, id: string) {
 }
 
 export async function listInvoices(tx: Tx, status?: string) {
-  return tx`SELECT si.id, si.draft_ref AS "draftRef", si.doc_no AS "docNo", si.doc_date::text AS "docDate", c.name AS "customerName", si.sale_type AS "saleType", si.currency, si.net::text AS net, si.status, si.due_date::text AS "dueDate"
+  return tx`SELECT si.id, si.draft_ref AS "draftRef", si.doc_no AS "docNo", si.doc_date::text AS "docDate", c.name AS "customerName", si.sale_type AS "saleType", si.currency, si.net::text AS net, si.status, si.due_date::text AS "dueDate",
+      CASE WHEN si.status = 'POSTED' THEN (si.net - COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED'), 0)
+        - COALESCE((SELECT sum(applied_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0))::text END AS outstanding
     FROM sales_invoices si JOIN contacts c ON c.id = si.customer_id WHERE (${status ?? null}::text IS NULL OR si.status = ${status ?? null}) ORDER BY si.doc_date DESC, si.created_at DESC LIMIT 300`;
 }
 

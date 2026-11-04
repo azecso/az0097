@@ -60,3 +60,5 @@ table { width: 100%; border-collapse: collapse; } th, td { text-align: start; pa
 @media print { .print-bar { display: none !important; } .sheet { margin: 0; box-shadow: none; } html, body { background: #fff !important; } .print-root { min-height: 0; } }
 
 .clickrow { cursor: pointer; } .clickrow:hover, .clickrow:focus-visible { background: rgba(0,0,0,.04); outline: none; }
+.paidrow { background: rgba(46,160,67,.13); } .paidrow:hover { background: rgba(46,160,67,.2); } .paytag { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:600; } .paytag.paid { background: rgba(46,160,67,.25); color: #176b2c; } .paytag.partial { background: rgba(230,160,0,.22); color: #8a5a00; } .paytag.unpaid { background: rgba(0,0,0,.06); }
+@media (prefers-color-scheme: dark) { .paytag.paid { color: #7ee2a0; } .paytag.partial { color: #ffd479; } }
