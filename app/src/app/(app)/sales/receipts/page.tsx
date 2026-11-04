@@ -4,7 +4,7 @@ import Decimal from "decimal.js";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { createDraft, useRefList } from "@/lib/offline/use";
-import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
+import { MsgBox, StatusBadge, useAction, useLoad , ReverseBox } from "@/components/ui";
 
 interface R { id: string; draftRef: string; docNo: string | null; docDate: string; customerName: string; kind: string; cashAccount: string | null; currency: string; amount: string; fxDiffBase: string; status: string; autoForInvoice: string | null }
 interface Ag { id: string; docNo: string; customer: string; customerId: string; currency: string; outstanding: string; dueDate: string | null; daysOverdue: number; bucket: string }
@@ -55,6 +55,6 @@ export default function Receipts() {
       <tbody>{list.data.map((r) => <tr key={r.id}><td><span className="num">{r.docNo ?? r.draftRef}</span></td><td><span className="num">{r.docDate}</span></td><td>{r.customerName}</td><td><span className="num">{money(r.amount)} {r.currency}</span></td><td>{r.cashAccount ?? "رصيد دائن"}</td><td><span className="num">{money(r.fxDiffBase)}</span></td><td><StatusBadge s={r.status} /></td>
         <td><a href={`/print/receipt/${r.id}`} target="_blank" rel="noreferrer"><button>طباعة</button></a>{r.status === "DRAFT" && can(me, "voucher:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/customer-receipts/${r.id}/post`, { method: "POST" }), "تم الترحيل")}>ترحيل</button>}
           {r.status === "DRAFT" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/customer-receipts/${r.id}`, { method: "DELETE" }), "حُذفت المسودة")}>حذف</button>}
-          {r.status === "POSTED" && !r.autoForInvoice && can(me, "voucher:cancel") && <><input aria-label="سبب العكس" placeholder="سبب العكس" style={{ maxWidth: 160 }} value={reason} onChange={(e) => setReason(e.target.value)} /><button className="danger" disabled={busy || reason.length < 3} onClick={() => run(() => api(`/api/customer-receipts/${r.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")}>عكس</button></>}</td></tr>)}
+          {r.status === "POSTED" && !r.autoForInvoice && can(me, "voucher:cancel") && <ReverseBox busy={busy} onReverse={(reason) => run(() => api(`/api/customer-receipts/${r.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
         {list.data.length === 0 && <tr><td colSpan={8}>لا توجد سندات</td></tr>}</tbody></table></div></>);
 }

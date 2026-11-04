@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
-import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
+import { MsgBox, StatusBadge, useAction, useLoad , ReverseBox } from "@/components/ui";
 
 interface A { id: string; name: string; currency: string; kind: string; countsTowardAvailable: boolean; balance: string }
 interface T { id: string; draftRef: string; docNo: string | null; docDate: string; from: string; to: string; currency: string; amount: string; status: string }
@@ -26,6 +26,6 @@ export default function Cash() {
       <tbody>{list.data.map((t) => <tr key={t.id}><td><span className="num">{t.docNo ?? t.draftRef}</span></td><td><span className="num">{t.docDate}</span></td><td>{t.from}</td><td>{t.to}</td><td><span className="num">{money(t.amount)} {t.currency}</span></td><td><StatusBadge s={t.status} /></td>
         <td><a href={`/print/cash-transfer/${t.id}`} target="_blank" rel="noreferrer"><button>طباعة</button></a>{t.status === "DRAFT" && can(me, "voucher:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/cash-transfers/${t.id}/post`, { method: "POST" }), "تم الترحيل")}>ترحيل</button>}
           {t.status === "DRAFT" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/cash-transfers/${t.id}`, { method: "DELETE" }), "حُذف")}>حذف</button>}
-          {t.status === "POSTED" && can(me, "voucher:cancel") && <><input aria-label="سبب العكس" placeholder="سبب العكس" style={{ maxWidth: 160 }} value={reason} onChange={(e) => setReason(e.target.value)} /><button className="danger" disabled={busy || reason.length < 3} onClick={() => run(() => api(`/api/cash-transfers/${t.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")}>عكس</button></>}</td></tr>)}
+          {t.status === "POSTED" && can(me, "voucher:cancel") && <ReverseBox busy={busy} onReverse={(reason) => run(() => api(`/api/cash-transfers/${t.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
         {list.data.length === 0 && <tr><td colSpan={7}>لا توجد سندات تحويل</td></tr>}</tbody></table></div></>);
 }

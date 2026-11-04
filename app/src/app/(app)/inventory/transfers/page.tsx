@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { api, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
-import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
+import { MsgBox, StatusBadge, useAction, useLoad , ReverseBox } from "@/components/ui";
 
 interface T { id: string; draftRef: string; docNo: string | null; docDate: string; from: string; to: string; status: string }
 interface Prod { id: string; code: string; name: string; baseUom: string; uoms: { uom: string }[] } interface Loc { id: string; name: string }
@@ -32,6 +32,6 @@ export default function Transfers() {
       <tbody>{list.data.map((t) => <tr key={t.id}><td><span className="num">{t.docNo ?? t.draftRef}</span></td><td><span className="num">{t.docDate}</span></td><td>{t.from}</td><td>{t.to}</td><td><StatusBadge s={t.status} /></td>
         <td>{t.status === "DRAFT" && can(me, "stock_transfer:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/stock-transfers/${t.id}/post`, { method: "POST" }), "تم ترحيل التحويل")}>ترحيل</button>}
           {t.status === "DRAFT" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/stock-transfers/${t.id}`, { method: "DELETE" }), "حُذفت المسودة")}>حذف</button>}
-          {t.status === "POSTED" && can(me, "stock_transfer:cancel") && <><input aria-label="سبب العكس" placeholder="سبب العكس" value={reason} onChange={(e) => setReason(e.target.value)} style={{ maxWidth: 160 }} /><button className="danger" disabled={busy || reason.length < 3} onClick={() => run(() => api(`/api/stock-transfers/${t.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")}>عكس</button></>}</td></tr>)}
+          {t.status === "POSTED" && can(me, "stock_transfer:cancel") && <ReverseBox busy={busy} onReverse={(reason) => run(() => api(`/api/stock-transfers/${t.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
         {list.data.length === 0 && <tr><td colSpan={6}>لا توجد تحويلات</td></tr>}</tbody></table></div></>);
 }

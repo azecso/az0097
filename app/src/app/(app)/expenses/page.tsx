@@ -4,7 +4,7 @@ import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { createDraft, useRefList } from "@/lib/offline/use";
 import { PickOrCreate } from "@/components/pick";
-import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
+import { MsgBox, StatusBadge, useAction, useLoad , ReverseBox } from "@/components/ui";
 
 interface E { id: string; draftRef: string; docNo: string | null; docDate: string; category: string; description: string; currency: string; amount: string; paymentMode: string; partnerTreatment: string | null; status: string; outstanding: string }
 interface Cat { id: string; name: string } interface Cash { id: string; name: string; currency: string; kind: string }
@@ -44,6 +44,6 @@ export default function Expenses() {
           {x.status === "DRAFT" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/expenses/${x.id}`, { method: "DELETE" }), "حُذفت المسودة")}>حذف</button>}
           {x.status === "POSTED" && Number(x.outstanding) > 0 && can(me, "expense:approve") && <><input aria-label="مبلغ السداد" placeholder="مبلغ السداد" style={{ maxWidth: 120 }} dir="ltr" value={pay[x.id] ?? ""} onChange={(e) => setPay({ ...pay, [x.id]: e.target.value })} />
             <button disabled={busy || !pay[x.id]} onClick={() => run(() => api("/api/expense-payments", { method: "POST", body: { expenseId: x.id, docDate: today(), cashAccountId: mainCash.find((c) => c.currency === x.currency)?.id, amount: pay[x.id] } }), "تم السداد")}>سداد</button></>}
-          {x.status === "POSTED" && can(me, "expense:cancel") && <><input aria-label="سبب العكس" placeholder="سبب العكس" style={{ maxWidth: 140 }} value={reason} onChange={(e) => setReason(e.target.value)} /><button className="danger" disabled={busy || reason.length < 3} onClick={() => run(() => api(`/api/expenses/${x.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")}>عكس</button></>}</td></tr>)}
+          {x.status === "POSTED" && can(me, "expense:cancel") && <ReverseBox busy={busy} onReverse={(reason) => run(() => api(`/api/expenses/${x.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
         {list.data.length === 0 && <tr><td colSpan={9}>لا توجد مصاريف</td></tr>}</tbody></table></div></>);
 }

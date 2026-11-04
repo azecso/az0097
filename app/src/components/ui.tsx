@@ -25,3 +25,10 @@ export function useAction(onDone?: () => void) {
 
 export const STATUS_AR: Record<string, string> = { DRAFT: "مسودة", IN_REVIEW: "قيد المراجعة", POSTED: "مرحّل", REVERSED: "معكوس" };
 export function StatusBadge({ s }: { s: string }) { return <span className="badge">{s === "POSTED" ? "✔ " : s === "REVERSED" ? "↩ " : "✎ "}{STATUS_AR[s] ?? s}</span>; }
+
+/** Reverse-with-reason control with its OWN text state, so typing a reason on one row never fills the other rows. */
+export function ReverseBox({ busy, onReverse, label = "عكس" }: { busy?: boolean; onReverse: (reason: string) => unknown; label?: string }) {
+  const [reason, setReason] = useState("");
+  return (<><input aria-label="سبب العكس" placeholder="سبب العكس" style={{ maxWidth: 160 }} value={reason} onChange={(e) => setReason(e.target.value)} />
+    <button className="danger" disabled={busy || reason.trim().length < 3} onClick={() => { void Promise.resolve(onReverse(reason.trim())).then(() => setReason("")); }}>{label}</button></>);
+}
