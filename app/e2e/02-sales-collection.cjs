@@ -60,6 +60,12 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   await mp.goto(B + "/login"); await mp.fill("#u", "owner"); await mp.fill("#p", "Owner-Smoke-Pass-77"); await mp.click("button.primary"); await mp.waitForURL(B + "/");
   for (const path of ["/sales", "/sales/new", "/sales/" + invId, "/sales/receipts", "/cash", "/sales/quotes"]) { await mp.goto(B + path); await mp.waitForSelector("h1"); await mp.waitForTimeout(600); ok(`mobile ${path.replace(invId, ":id")}: no horizontal scroll`, await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)); }
   await mp.goto(B + "/sales/" + invId); await mp.waitForTimeout(500); await mp.screenshot({ path: "sale-mobile.png" });
+  await p.goto(B + "/"); await wait("a[aria-label='تفاصيل: رصيد الصندوق']"); await p.click("a[aria-label='تفاصيل: رصيد الصندوق']"); await p.waitForURL(/\/cash\/movements/);
+  await p.waitForSelector("td:has-text('سند قبض من عميل')"); const mv = await p.textContent("body");
+  ok("dashboard cash card opens the movement ledger with the source of each amount", mv.includes("سند قبض من عميل") && mv.includes("تحويل بين الصناديق") && /RC-\d{4}-/.test(mv));
+  await p.goto(B + "/"); await p.click("a[aria-label^='تفاصيل: ديون العملاء']"); await p.waitForURL(/\/reports\?tab=debtors/); await p.waitForSelector("tbody td:has-text('INV-')");
+  ok("customer-debts card opens the debtors report with total, paid and remaining per invoice", (await p.textContent("thead")).includes("المقبوض") && (await p.textContent("tbody")).includes("500,000"));
+  await p.goto(B + "/"); await p.click("a[aria-label='تفاصيل: قيمة المخزون']"); await p.waitForURL(/\/inventory\/stock/); ok("inventory card opens the stock page", true);
   ok("no console/page errors", errs.length === 0); if (errs.length) out.push("  " + errs.slice(0, 3).join(" | "));
   console.log(out.join("\n")); await b.close();
 })().catch((e) => { console.error("SMOKE ERROR", e.message.split("\n").slice(0, 8).join("\n")); process.exit(1); });

@@ -137,3 +137,16 @@ describe("debtors report includes receipts that were not allocated to an invoice
     expect(after.length).toBe(1); expect(Number(after[0].outstanding)).toBe(140000);
   });
 });
+
+describe("cash ledger shows where each amount came from", () => {
+  it("lists receipts with document number and party, a running balance and a summary by source", async () => {
+    const r = (await get(w.R.cashLedger, "/api/cash-ledger")).body;
+    const rc = r.rows.find((x: any) => x.docType === "customer_receipt");
+    expect(rc).toMatchObject({ source: "سند قبض من عميل", party: "مروان", currency: "IQD" }); expect(rc.docNo).toMatch(/^RC-2026-/);
+    const sum = r.bySource.find((x: any) => x.source === "سند قبض من عميل" && x.currency === "IQD");
+    expect(Number(sum.in)).toBeGreaterThanOrEqual(2920000);
+    const acct = r.rows[0].accountId; const only = (await get(w.R.cashLedger, `/api/cash-ledger?accountId=${acct}`)).body;
+    expect(only.rows.every((x: any) => x.accountId === acct)).toBe(true);
+    const unauth = await w.api(null as never, w.R.cashLedger, { path: "/api/cash-ledger" }); expect(unauth.status).toBe(401);
+  });
+});

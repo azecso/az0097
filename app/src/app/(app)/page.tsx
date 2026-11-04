@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
 import Decimal from "decimal.js";
 import { money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
@@ -18,8 +19,9 @@ interface Alert { level: "high" | "medium" | "info"; code: string; message: stri
 
 const first = () => `${today().slice(0, 8)}01`;
 function Delta({ v }: { v: string | null | undefined }) { if (v === null || v === undefined) return <small className="badge">لا مقارنة</small>; const n = Number(v); return <small className="badge" style={{ color: n >= 0 ? "var(--accent)" : "var(--danger)" }}>{n >= 0 ? "▲" : "▼"} <span className="num">{Math.abs(n)}%</span> عن الفترة السابقة</small>; }
-function Card({ label, value, sub, delta }: { label: string; value: string | undefined; sub?: string; delta?: string | null }) {
-  return <div className="card stat"><div className="label">{label}</div><div className="value"><span className="num">{money(value)}</span></div>{sub && <small style={{ color: "var(--muted)" }}>{sub}</small>}{delta !== undefined && <div><Delta v={delta} /></div>}</div>;
+function Card({ label, value, sub, delta, href }: { label: string; value: string | undefined; sub?: string; delta?: string | null; href?: string }) {
+  const body = <div className="card stat" style={href ? { cursor: "pointer" } : undefined}><div className="label">{label}</div><div className="value"><span className="num">{money(value)}</span></div>{sub && <small style={{ color: "var(--muted)" }}>{sub}</small>}{delta !== undefined && <div><Delta v={delta} /></div>}</div>;
+  return href ? <Link href={href} aria-label={`تفاصيل: ${label}`} style={{ textDecoration: "none", color: "inherit", display: "block" }}>{body}<small style={{ color: "var(--accent)" }}>اضغط للتفاصيل ←</small></Link> : body;
 }
 
 function Lines({ data }: { data: Dash["series"] }) {
@@ -55,14 +57,14 @@ export default function Dashboard() {
       {!data.integrity.balanced && <div className="msg err" role="alert">⛔ معادلة الميزانية غير متوازنة (فرق {money(data.integrity.equationDifference)}) — راجع فوراً</div>}
       <h2>المركز المالي الآن</h2>
       <div className="grid">
-        <Card label="رأس المال" value={data.balances.capital} /><Card label="رصيد الصندوق" value={data.balances.mainCash} sub={`عهدة الشريك (ذمة منفصلة): ${money(data.balances.partnerCustodyCash)}`} />
-        <Card label="قيمة المخزون" value={String(Number(data.balances.inventoryMain) + Number(data.balances.inventoryPartner))} sub={`الرئيسي ${money(data.balances.inventoryMain)} • عند الشريك ${money(data.balances.inventoryPartner)}`} />
-        <Card label="ديون العملاء (الصافي)" value={new Decimal(data.balances.receivables ?? 0).minus(data.balances.customerCredit ?? 0).toString()} sub={`إجمالي الفواتير ${money(data.balances.receivables)}${Number(data.balances.customerCredit) > 0 ? ` − دفعات غير مخصّصة ${money(data.balances.customerCredit)}` : ""} · المتأخر ${money(data.balances.overdueReceivables)}`} /><Card label="ديون الموردين" value={data.balances.supplierPayables} sub={`رواتب ومصاريف مستحقة: ${money(data.balances.accruedLiabilities)}`} />
-        <Card label="الربح القابل للتوزيع الآن" value={data.distributable?.distributable ?? "0"} sub={data.distributable ? `المالك ${money(data.distributable.ownerShare)} • الشريك ${money(data.distributable.partnerShare)}` : undefined} /></div>
+        <Card href="/capital" label="رأس المال" value={data.balances.capital} /><Card href="/cash/movements" label="رصيد الصندوق" value={data.balances.mainCash} sub={`عهدة الشريك (ذمة منفصلة): ${money(data.balances.partnerCustodyCash)}`} />
+        <Card href="/inventory/stock" label="قيمة المخزون" value={new Decimal(data.balances.inventoryMain ?? 0).plus(data.balances.inventoryPartner ?? 0).toString()} sub={`الرئيسي ${money(data.balances.inventoryMain)} • عند الشريك ${money(data.balances.inventoryPartner)}`} />
+        <Card href="/reports?tab=debtors" label="ديون العملاء (الصافي)" value={new Decimal(data.balances.receivables ?? 0).minus(data.balances.customerCredit ?? 0).toString()} sub={`إجمالي الفواتير ${money(data.balances.receivables)}${Number(data.balances.customerCredit) > 0 ? ` − دفعات غير مخصّصة ${money(data.balances.customerCredit)}` : ""} · المتأخر ${money(data.balances.overdueReceivables)}`} /><Card href="/reports?tab=creditors" label="ديون الموردين" value={data.balances.supplierPayables} sub={`رواتب ومصاريف مستحقة: ${money(data.balances.accruedLiabilities)}`} />
+        <Card href="/partners" label="الربح القابل للتوزيع الآن" value={data.distributable?.distributable ?? "0"} sub={data.distributable ? `المالك ${money(data.distributable.ownerShare)} • الشريك ${money(data.distributable.partnerShare)}` : undefined} /></div>
       <h2>أداء الفترة ({data.range.from} → {data.range.to})</h2>
       <div className="grid">
-        <Card label="صافي المبيعات" value={data.period.revenue} delta={data.change.revenue} /><Card label="تكلفة البضاعة المباعة" value={data.period.cogs} /><Card label="إجمالي الربح" value={data.period.grossProfit} />
-        <Card label="المصاريف المستحقة" value={data.period.expenses} delta={data.change.expenses} /><Card label="صافي ربح الفترة (استحقاق)" value={data.period.netProfit} delta={data.change.netProfit} /><Card label="التحصيل" value={data.period.collections} delta={data.change.collections} /></div>
+        <Card href="/reports?tab=sales" label="صافي المبيعات" value={data.period.revenue} delta={data.change.revenue} /><Card href="/reports?tab=sales" label="تكلفة البضاعة المباعة" value={data.period.cogs} /><Card href="/reports?tab=sales" label="إجمالي الربح" value={data.period.grossProfit} />
+        <Card href="/expenses" label="المصاريف المستحقة" value={data.period.expenses} delta={data.change.expenses} /><Card label="صافي ربح الفترة (استحقاق)" value={data.period.netProfit} delta={data.change.netProfit} /><Card label="التحصيل" value={data.period.collections} delta={data.change.collections} /></div>
       <div className="grid" style={{ marginTop: 12 }}>
         <div className="card" style={{ gridColumn: "1 / -1" }}><h2 style={{ marginTop: 0 }}>الإيرادات مقابل التكاليف والمصاريف (12 شهراً)</h2><Lines data={data.series} /><small style={{ color: "var(--muted)" }}>— خط متصل: الإيراد • خط متقطع: التكلفة + المصاريف</small></div>
         <div className="card"><h2 style={{ marginTop: 0 }}>أفضل الأصناف</h2><Bars unit="" rows={data.topProducts.map((p) => ({ label: `${p.code} — ${p.name}`, value: Number(p.revenue), note: `ربح ${money(String(Number(p.revenue) - Number(p.cost)))}` }))} /></div>

@@ -24,7 +24,7 @@ export function colsOf(t: RType, group: string, summary: boolean): ColDef[] {
   }
   if (t === "movement") return [{ key: "movedAt", label: "التاريخ" }, { key: "type", label: "الحركة" }, { key: "location", label: "الموقع" }, { key: "qty", label: "الكمية", kind: "qty" }, { key: "cost", label: "التكلفة", kind: "money" }, { key: "balance", label: "الرصيد", kind: "qty" }];
   return summary ? [{ key: "party", label: "الجهة" }, { key: "currency", label: "العملة" }, { key: "docs", label: "عدد الفواتير", kind: "qty" }, { key: "outstanding", label: "المتبقي", kind: "money" }, { key: "maxOverdue", label: "أقصى تأخر (يوم)", kind: "qty" }]
-    : [{ key: "docNo", label: "الفاتورة" }, { key: "party", label: "الجهة" }, { key: "currency", label: "العملة" }, { key: "total", label: "الإجمالي", kind: "money" }, { key: "outstanding", label: "المتبقي", kind: "money" }, { key: "dueDate", label: "الاستحقاق" }, { key: "daysOverdue", label: "أيام التأخر", kind: "qty" }];
+    : [{ key: "docNo", label: "الفاتورة" }, { key: "party", label: "الجهة" }, { key: "currency", label: "العملة" }, { key: "total", label: "الإجمالي", kind: "money" }, { key: "paid", label: "المقبوض/المسدَّد", kind: "money" }, { key: "outstanding", label: "المتبقي", kind: "money" }, { key: "dueDate", label: "الاستحقاق" }, { key: "daysOverdue", label: "أيام التأخر", kind: "qty" }];
 }
 /** Totals line from the server payload (already Decimal-exact). */
 export function totalsOf(t: RType, data: any): Record<string, string> | null {

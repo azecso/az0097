@@ -1,5 +1,6 @@
 "use client";
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { money } from "@/lib/client";
 import { useRefList } from "@/lib/offline/use";
 import { MsgBox, useLoad } from "@/components/ui";
@@ -9,8 +10,8 @@ interface Opt { id: string; name: string; code?: string; kind?: string }
 const TYPES = Object.keys(TYPE_TITLE) as RType[];
 const cell = (v: unknown, kind?: string) => (v === null || v === undefined || v === "" ? "—" : kind === "money" ? money(v as string) : kind === "qty" ? Number(v).toLocaleString("en-US", { maximumFractionDigits: 4 }) : String(v));
 
-export default function Reports() {
-  const [type, setType] = useState<RType>("sales"); const [group, setGroup] = useState("invoice"); const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+function Inner() {
+  const tab = useSearchParams().get("tab"); const [type, setType] = useState<RType>((TYPES as string[]).includes(tab ?? "") ? (tab as RType) : "sales"); const [group, setGroup] = useState("invoice"); const [from, setFrom] = useState(""); const [to, setTo] = useState("");
   const [party, setParty] = useState(""); const [product, setProduct] = useState(""); const [overdue, setOverdue] = useState(false); const [summary, setSummary] = useState(false);
   const contacts = useRefList<Opt>("contacts", "/api/contacts").data; const prods = useRefList<Opt>("products", "/api/products").data;
   const wantCustomer = type === "sales" || type === "debtors"; const parties = contacts.filter((c) => (wantCustomer ? c.kind !== "SUPPLIER" : c.kind !== "CUSTOMER"));
@@ -50,3 +51,4 @@ export default function Reports() {
     </div>}
   </>);
 }
+export default function Reports() { return <Suspense fallback={null}><Inner /></Suspense>; }

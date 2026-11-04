@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
+import Decimal from "decimal.js";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
@@ -15,6 +16,7 @@ export default function InvoiceView() {
   const { data: d, reload, err } = useLoad<Doc | null>(`/api/sales-invoices/${id}`, null); const { msg, busy, run } = useAction(reload);
   const [reason, setReason] = useState(""); const [ret, setRet] = useState<Record<string, string>>({}); const [dq, setDq] = useState<Record<string, string>>({}); const [pay, setPay] = useState("");
   const cash = useLoad<{ id: string; name: string; currency: string }[]>("/api/cash-accounts", []).data; const [acct, setAcct] = useState("");
+  const cst = useLoad<{ unappliedCredit?: string } | null>(d && d.status === "POSTED" ? `/api/customers/${d.customerId}/statement` : null, null).data;
   if (!d) return <p>{err || "جارٍ التحميل…"}</p>;
   const posted = d.status === "POSTED"; const canProfit = can(me, "report:view");
   return (<>
@@ -26,10 +28,15 @@ export default function InvoiceView() {
       {Number(d.discount) > 0 && <div><div className="label">الخصم</div><span className="num">{money(d.discount)}</span></div>}
       <div><div className="label">الصافي</div><strong className="num">{money(d.net)} {d.currency}</strong></div>
       {d.currency !== "IQD" && <div><div className="label">سعر الصرف المثبّت</div><span className="num">{money(d.exchangeRate)}</span></div>}
-      {d.outstanding !== undefined && <><div><div className="label">المحصّل</div><span className="num">{money(d.collected)}</span></div><div><div className="label">المتبقي</div><strong className="num">{money(d.outstanding)} {d.currency}</strong></div></>}
+      {d.outstanding !== undefined && <><div><div className="label">إجمالي المقبوض على هذه الفاتورة</div><span className="num">{money(d.collected)}</span></div><div><div className="label">المتبقي للقبض</div><strong className="num">{money(d.outstanding)} {d.currency}</strong></div></>}
       {canProfit && d.profit && <><div><div className="label">إجمالي الربح</div><span className="num">{money(d.profit.grossProfitBase)} IQD</span></div>
         <div><div className="label">الربح المرتبط بالتحصيل (مؤشر)</div><span className="num">{money(d.profit.linkedProfitBase)} IQD</span></div></>}
     </div>
+    {posted && d.outstanding !== undefined && d.currency === "IQD" && cst?.unappliedCredit && new Decimal(cst.unappliedCredit).gt(0) && new Decimal(d.outstanding).gt(0) && can(me, "voucher:create") && can(me, "voucher:approve") && (() => {
+      const use = Decimal.min(new Decimal(cst.unappliedCredit), new Decimal(d.outstanding)).toString();
+      return <div className="card" style={{ marginTop: 12, borderColor: "var(--accent)" }}><strong>لهذا العميل رصيد دائن غير مخصَّص: {money(cst.unappliedCredit)} IQD</strong> (قبض سُجّل دون ربطه بفاتورة).
+        <p>يمكنك تسوية <span className="num">{money(use)}</span> منه على هذه الفاتورة الآن فيصير المتبقي <span className="num">{money(new Decimal(d.outstanding).minus(use).toString())}</span>.</p>
+        <button className="primary" disabled={busy} onClick={() => run(async () => { const r = await api<{ id: string }>("/api/customer-receipts", { method: "POST", body: { customerId: d.customerId, docDate: today(), kind: "CREDIT_APPLICATION", cashAccountId: null, currency: "IQD", amount: use, allocations: [{ invoiceId: id, amount: use }] } }); await api(`/api/customer-receipts/${r.id}/post`, { method: "POST" }); void cst; }, "تمت تسوية الرصيد الدائن على الفاتورة")}>تسوية الرصيد الدائن على هذه الفاتورة</button></div>; })()}
     <div className="card cards-as-list" style={{ marginTop: 12 }}><table><thead><tr><th>#</th><th>المادة</th><th>الكمية</th><th>السعر</th><th>الخصم</th><th>الإجمالي</th>{posted && <><th>المسلّم</th><th>المرتجع</th></>}</tr></thead>
       <tbody>{d.lines.map((l) => <tr key={l.id}><td>{l.lineNo}</td><td>{l.productCode} — {l.productName}</td><td><span className="num">{money(l.qty)} {l.uom}</span></td><td><span className="num">{money(l.unitPrice)}</span></td><td><span className="num">{money(l.lineDiscount)}</span></td><td><span className="num">{money(l.lineTotal)}</span></td>
         {posted && <><td><span className="num">{money(l.delivered)}</span> / <span className="num">{money(l.qtyBase)}</span></td><td><span className="num">{money(l.returned)}</span></td></>}</tr>)}</tbody></table></div>

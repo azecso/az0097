@@ -73,8 +73,8 @@ export async function balancesReport(tx: Tx, side: "debtors" | "creditors", q: {
   let rows = all.filter((r) => d(r.outstanding).gt(0));
   if (q.partyId) rows = rows.filter((r) => r[idKey] === q.partyId);
   if (q.overdueOnly) rows = rows.filter((r) => Number(r.daysOverdue) > 0);
-  const detail: { docNo: string; party: string; currency: string; total: string | null; outstanding: string; dueDate: string | null; daysOverdue: number }[] =
-    rows.map((r) => ({ docNo: r.docNo, party: r[nameKey], currency: r.currency, total: r.total, outstanding: r.outstanding, dueDate: r.dueDate, daysOverdue: Number(r.daysOverdue) }));
+  const detail: { docNo: string; party: string; currency: string; total: string | null; paid: string | null; outstanding: string; dueDate: string | null; daysOverdue: number }[] =
+    rows.map((r) => ({ docNo: r.docNo, party: r[nameKey], currency: r.currency, total: r.total, paid: d(r.total).minus(r.outstanding).toString(), outstanding: r.outstanding, dueDate: r.dueDate, daysOverdue: Number(r.daysOverdue) }));
   // Payments/receipts that were not allocated to an invoice (customer credit / supplier advance) are real money that reduces what is owed:
   // the party's ledger balance minus the sum of its open invoices is exactly that unallocated amount. Showing it keeps this report equal to the statement.
   if (!q.overdueOnly) {
@@ -86,7 +86,7 @@ export async function balancesReport(tx: Tx, side: "debtors" | "creditors", q: {
     const open = new Map<string, Decimal>(); for (const r of all.filter((x) => d(x.outstanding).gt(0))) { const k = `${r[idKey]}|${r.currency}`; open.set(k, (open.get(k) ?? d(0)).plus(d(r.outstanding))); }
     for (const l of led as unknown as { id: string; name: string; currency: string; bal: string }[]) {
       const diff = d(l.bal).minus(open.get(`${l.id}|${l.currency}`) ?? 0);
-      if (diff.abs().gte("0.0001")) detail.push({ docNo: diff.lt(0) ? (side === "debtors" ? "رصيد دائن (دفعة غير مخصصة)" : "سلفة مورد (دفعة غير مخصصة)") : "فرق غير مخصص", party: l.name, currency: l.currency, total: null, outstanding: diff.toString(), dueDate: null, daysOverdue: 0 });
+      if (diff.abs().gte("0.0001")) detail.push({ docNo: diff.lt(0) ? (side === "debtors" ? "رصيد دائن (دفعة غير مخصصة)" : "سلفة مورد (دفعة غير مخصصة)") : "فرق غير مخصص", party: l.name, currency: l.currency, total: null, paid: null, outstanding: diff.toString(), dueDate: null, daysOverdue: 0 });
     }
   }
   const byCur = new Map<string, Decimal>();

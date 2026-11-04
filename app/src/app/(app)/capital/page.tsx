@@ -1,5 +1,7 @@
 "use client";
 import { useState } from "react";
+import Decimal from "decimal.js";
+import Link from "next/link";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
@@ -16,7 +18,10 @@ export default function Capital() {
     await run(() => api("/api/personal-advances", { method: "POST", body: { partnerKind: String(f.get("who")), kind: String(f.get("kind")), docDate: today(), cashAccountId: c.id, currency: c.currency, amount: String(f.get("amount")), note: String(f.get("note") ?? "") || null } }), "حُفظ السند"); }
   return (<>
     <h1>رأس المال والسحوبات</h1>
-    <div className="grid"><div className="card stat"><div className="label">رأس المال القائم</div><div className="value"><span className="num">{money(cap.data.balance)}</span></div></div></div>
+    <div className="grid"><div className="card stat"><div className="label">رأس المال القائم</div><div className="value"><span className="num">{money(cap.data.balance)}</span></div></div>
+      <div className="card stat"><div className="label">إجمالي الإيداعات المعتمدة</div><div className="value"><span className="num">{money(cap.data.transactions.filter((t) => t.status === "POSTED" && t.kind === "INJECTION").reduce((x, t) => x.plus(t.amount), new Decimal(0)).toString())}</span></div></div>
+      <div className="card stat"><div className="label">إجمالي السحوبات المعتمدة</div><div className="value"><span className="num">{money(cap.data.transactions.filter((t) => t.status === "POSTED" && t.kind === "WITHDRAWAL").reduce((x, t) => x.plus(t.amount), new Decimal(0)).toString())}</span></div></div></div>
+    <p>المصدر: كل إيداع في الجدول أدناه بتاريخه ورقمه ومن طلبه ومن اعتمده. <Link href="/capital/returns">سجل إرجاع رأس المال ←</Link></p>
     <p>المالك وحده يموّل رأس المال. كل إيداع أو سحب <strong>طلب</strong> يعتمده المالك فقط (برمز المصادقة الثنائية). السحب لا يتجاوز النقد المتاح ولا رأس المال القائم. السحب والإيداع ليسا إيراداً ولا مصروفاً.</p>
     {me.user.isOwner && <div className="card row"><div><label htmlFor="tp">رمز المصادقة الثنائية (للاعتماد)</label><input id="tp" value={totp} onChange={(e) => setTotp(e.target.value)} dir="ltr" inputMode="numeric" maxLength={6} /></div></div>}
     {can(me, "capital:create") && <form className="card row" onSubmit={request} style={{ marginTop: 12 }}>
