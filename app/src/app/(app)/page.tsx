@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import Decimal from "decimal.js";
 import { money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { useLoad } from "@/components/ui";
@@ -56,7 +57,7 @@ export default function Dashboard() {
       <div className="grid">
         <Card label="رأس المال" value={data.balances.capital} /><Card label="رصيد الصندوق" value={data.balances.mainCash} sub={`عهدة الشريك (ذمة منفصلة): ${money(data.balances.partnerCustodyCash)}`} />
         <Card label="قيمة المخزون" value={String(Number(data.balances.inventoryMain) + Number(data.balances.inventoryPartner))} sub={`الرئيسي ${money(data.balances.inventoryMain)} • عند الشريك ${money(data.balances.inventoryPartner)}`} />
-        <Card label="ديون العملاء" value={data.balances.receivables} sub={`المتأخر: ${money(data.balances.overdueReceivables)}`} /><Card label="ديون الموردين" value={data.balances.supplierPayables} sub={`رواتب ومصاريف مستحقة: ${money(data.balances.accruedLiabilities)}`} />
+        <Card label="ديون العملاء (الصافي)" value={new Decimal(data.balances.receivables ?? 0).minus(data.balances.customerCredit ?? 0).toString()} sub={`إجمالي الفواتير ${money(data.balances.receivables)}${Number(data.balances.customerCredit) > 0 ? ` − دفعات غير مخصّصة ${money(data.balances.customerCredit)}` : ""} · المتأخر ${money(data.balances.overdueReceivables)}`} /><Card label="ديون الموردين" value={data.balances.supplierPayables} sub={`رواتب ومصاريف مستحقة: ${money(data.balances.accruedLiabilities)}`} />
         <Card label="الربح القابل للتوزيع الآن" value={data.distributable?.distributable ?? "0"} sub={data.distributable ? `المالك ${money(data.distributable.ownerShare)} • الشريك ${money(data.distributable.partnerShare)}` : undefined} /></div>
       <h2>أداء الفترة ({data.range.from} → {data.range.to})</h2>
       <div className="grid">
