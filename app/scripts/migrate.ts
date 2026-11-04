@@ -33,7 +33,13 @@ export async function migrate(url: string, appRole?: { user: string; password: s
       const exists = await sql`SELECT 1 FROM pg_roles WHERE rolname = ${appRole.user}`;
       const pw = appRole.password.replace(/'/g, "''");
       if (exists.length === 0) await sql.unsafe(`CREATE ROLE ${appRole.user} LOGIN PASSWORD '${pw}' NOSUPERUSER NOBYPASSRLS`);
-      else await sql.unsafe(`ALTER ROLE ${appRole.user} PASSWORD '${pw}' NOSUPERUSER NOBYPASSRLS`);
+      else {
+        // Managed hosts (e.g. Neon) forbid non-superusers from changing SUPERUSER/BYPASSRLS attributes:
+        // set only the password, then verify the role is still unprivileged.
+        await sql.unsafe(`ALTER ROLE ${appRole.user} PASSWORD '${pw}'`);
+        const [flags] = await sql`SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = ${appRole.user}`;
+        if (flags!.rolsuper || flags!.rolbypassrls) throw new Error(`app role ${appRole.user} must not be SUPERUSER or BYPASSRLS`);
+      }
       const db = (await sql`SELECT current_database() AS d`)[0]!.d as string;
       await sql.unsafe(`GRANT CONNECT ON DATABASE "${db}" TO ${appRole.user}`);
       await sql.unsafe(`GRANT USAGE ON SCHEMA public TO ${appRole.user}`);
