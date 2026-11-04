@@ -58,3 +58,5 @@ table { width: 100%; border-collapse: collapse; } th, td { text-align: start; pa
 .sheet .num { direction: ltr; unicode-bidi: isolate; }
 @page { size: A4; margin: 0; }
 @media print { .print-bar { display: none !important; } .sheet { margin: 0; box-shadow: none; } html, body { background: #fff !important; } .print-root { min-height: 0; } }
+
+.clickrow { cursor: pointer; } .clickrow:hover, .clickrow:focus-visible { background: rgba(0,0,0,.04); outline: none; }

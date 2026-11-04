@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { api, ApiError, setCsrf } from "@/lib/client";
 import { can, MeCtx, type Me } from "@/components/me";
 import { useOffline } from "@/lib/offline/use";
@@ -21,7 +21,7 @@ const NAV = [
 ];
 
 export default function Shell({ children }: { children: React.ReactNode }) {
-  const [me, setMe] = useState<Me | null>(null); const path = usePathname(); const off = useOffline(); const [fromCache, setFromCache] = useState(false); const [pin, setPin] = useState(""); const [pinErr, setPinErr] = useState(""); const [update, setUpdate] = useState<ServiceWorkerRegistration | null>(null);
+  const [me, setMe] = useState<Me | null>(null); const path = usePathname(); const router = useRouter(); const off = useOffline(); const [fromCache, setFromCache] = useState(false); const [pin, setPin] = useState(""); const [pinErr, setPinErr] = useState(""); const [update, setUpdate] = useState<ServiceWorkerRegistration | null>(null);
   // The identity/permission list is not secret (the server re-checks every request). It is cached so the shell can open offline.
   const loadMe = useCallback(async () => {
     try {
@@ -57,6 +57,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         <nav className="side" aria-label="القائمة الرئيسية"><strong style={{ padding: "8px 12px" }}>النظام المحاسبي</strong>{nav}</nav>
         <div className="main">
           <div className="status">
+            {path !== "/" && <button type="button" aria-label="رجوع خطوة" onClick={() => (window.history.length > 1 ? router.back() : router.push("/"))}>← رجوع</button>}
             <Link href="/sync" aria-label="حالة الاتصال والمزامنة" style={{ display: "inline-flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <span><span className={off.online ? "dot" : "dot off"} />{off.online ? "متصل" : "غير متصل (وضع أوفلاين)"}</span>
               {off.pending > 0 && <span className="badge">⏳ {off.pending} بانتظار المزامنة</span>}{off.problems > 0 && <span className="badge" style={{ color: "var(--danger)" }}>⚠ {off.problems} تعارض/رفض</span>}

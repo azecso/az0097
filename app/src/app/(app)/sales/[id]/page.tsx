@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, money, today } from "@/lib/client";
@@ -36,6 +37,7 @@ export default function InvoiceView() {
     <p style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
       {d.status === "DRAFT" && can(me, "sales:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/sales-invoices/${id}/post`, { method: "POST" }), "تم الترحيل وإصدار الرقم النهائي")}>ترحيل</button>}
       <a href={`/print/sales-invoice/${id}`} target="_blank" rel="noreferrer"><button>طباعة / PDF</button></a>
+      {d.status === "DRAFT" && can(me, "sales:edit_draft") && <Link href={`/sales/new?edit=${id}`}><button>✏️ تعديل</button></Link>}
       {d.status === "DRAFT" && can(me, "sales:edit_draft") && <button className="danger" disabled={busy} onClick={async () => { if (await run(() => api(`/api/sales-invoices/${id}`, { method: "DELETE" }), "حُذفت المسودة")) router.push("/sales"); }}>حذف المسودة</button>}
     </p>
     <Attach entityType="sales_invoice" entityId={id} label="مرفقات الفاتورة (صور/إيصالات)" />
@@ -57,6 +59,7 @@ export default function InvoiceView() {
         const r = await run(() => api<{ id: string }>("/api/sales-returns", { method: "POST", body: { invoiceId: id, docDate: today(), reason, settlement: "REDUCE_RECEIVABLE", lines } }), "حُفظ المرتجع");
         if (r) await run(() => api(`/api/sales-returns/${r.id}/post`, { method: "POST" }), "تم ترحيل المرتجع"); }}>إنشاء وترحيل المرتجع</button></div>}
     {posted && can(me, "sales:cancel") && <div className="card" style={{ marginTop: 12 }}><h2>عكس الفاتورة</h2><p>يُنشأ قيد عكسي ويعود المخزون؛ لا يُحذف شيء.</p>
-      <div className="row"><div><label>السبب</label><input value={reason} onChange={(e) => setReason(e.target.value)} /></div><button className="danger" disabled={busy || reason.length < 3} onClick={() => run(() => api(`/api/sales-invoices/${id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")}>عكس</button></div></div>}
+      <div className="row"><div><label>السبب</label><input value={reason} onChange={(e) => setReason(e.target.value)} /></div><button className="danger" disabled={busy || reason.length < 3} onClick={() => run(() => api(`/api/sales-invoices/${id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")}>عكس</button>
+        <button disabled={busy || reason.length < 3} title="يعكس الفاتورة ثم يفتح نسخة جديدة منها للتعديل" onClick={async () => { const r = await run(() => api(`/api/sales-invoices/${id}/reverse`, { method: "POST", body: { reason } }), "تم العكس — عدّل النسخة الجديدة وارفضها أو رحّلها"); if (r !== undefined) router.push(`/sales/new?copy=${id}`); }}>✏️ تصحيح (عكس + نسخة جديدة)</button></div></div>}
   </>);
 }

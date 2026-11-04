@@ -27,6 +27,22 @@ let P; const BASE = process.env.E2E_BASE || "http://localhost:3100";
   await p.click("button.primary:has-text('ترحيل')"); await wait(".msg.ok"); await p.waitForFunction(() => document.querySelector("h1").textContent.includes("PO-"));
   ok("invoice with the freshly created supplier/product posts", true);
 
+  // navigation + correction flow (list row opens document, back button, reverse+copy, edit draft, re-post)
+  const detailUrl = p.url();
+  await p.goto(B + "/purchases"); await wait("tbody tr.clickrow"); await p.click("tbody tr.clickrow td:nth-child(3)");
+  await p.waitForURL(detailUrl); ok("clicking anywhere on a list row opens the document", true);
+  await p.click("button:has-text('رجوع')"); await p.waitForURL(B + "/purchases"); ok("the back button returns one step", true);
+  await p.goto(detailUrl); await wait("#rs"); await p.fill("#rs", "خطأ في الكمية"); await p.click("button:has-text('تصحيح')");
+  await p.waitForURL(/\/purchases\/new\?copy=/); await p.waitForFunction(() => [...document.querySelectorAll(".row.card input")].some((i) => i.value === "10"));
+  ok("correction reverses the original and opens a prefilled copy", true);
+  await p.click("button.primary:has-text('حفظ كمسودة')"); await p.waitForURL(/\/purchases\/[0-9a-f-]{36}$/); await wait("h1");
+  ok("the original is reversed and the copy is a new draft", (await p.textContent("h1")).includes("DRAFT-"));
+  await p.click("button:has-text('تعديل')"); await p.waitForURL(/\/purchases\/new\?edit=/); await p.waitForFunction(() => [...document.querySelectorAll(".row.card input")].some((i) => i.value === "10"));
+  for (const i of await p.$$(".row.card input")) if (await i.evaluate((n) => n.value === "10")) { await i.fill("12"); break; }
+  await p.click("button.primary:has-text('حفظ كمسودة')"); await p.waitForURL(/\/purchases\/[0-9a-f-]{36}$/); await p.waitForFunction(() => document.body.textContent.includes("30,000"));
+  ok("editing the draft saves the new quantity (12 x 2,500 = 30,000)", true);
+  await p.click("button.primary:has-text('ترحيل')"); await p.waitForFunction(() => document.querySelector("h1").textContent.includes("PO-")); ok("the corrected invoice posts", true);
+
   // 2) expense category quick-create
   await p.goto(B + "/expenses"); await wait("#c");
   const cat = p.locator(".pick").nth(0); await cat.locator("button:has-text('جديد')").click(); await cat.locator("input[name=nm]").fill("قرطاسية"); await cat.locator("button:has-text('حفظ واختيار')").click();
@@ -51,7 +67,7 @@ let P; const BASE = process.env.E2E_BASE || "http://localhost:3100";
   // 4) reports page, Excel, print
   await p.goto(B + "/reports"); await wait("#g"); await p.click("button[role=tab]:has-text('تقرير المشتريات')"); await p.selectOption("#g", "product");
   await p.waitForSelector("tbody td:has-text('SGR')"); const rep = await p.textContent("tbody");
-  ok("purchases report by product shows the item with its value", rep.includes("سكر ناعم") && rep.includes("25,000"));
+  ok("purchases report by product shows the item with its value", rep.includes("سكر ناعم") && rep.includes("30,000"));
   const x = await ctx.request.get(B + "/api/export/purchases-report?group=product"); ok("Excel export of the filtered report downloads", x.status() === 200 && (x.headers()["content-type"] || "").includes("spreadsheet"));
   const [rp] = await Promise.all([ctx.waitForEvent("page"), p.click("a:has-text('طباعة')")]); await rp.waitForSelector("[data-ready]", { timeout: 15000 });
   ok("print page renders the same report", (await rp.textContent("body")).includes("تقرير المشتريات") && (await rp.textContent("body")).includes("SGR")); await rp.close();

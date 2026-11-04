@@ -12,11 +12,11 @@ const META: Record<Kind, { perm: string; noun: string }> = {
 const autoCode = (p: string) => `${p}-${Date.now().toString(36).toUpperCase()}`;
 
 /** A normal <select> (so forms keep working) plus "+ جديد": create the missing customer/supplier/product/category right here and have it selected. Online only. */
-export function PickOrCreate({ kind, options, value, onChange, name, id, required, filterText, onCreated }: {
-  kind: Kind; options: PickOpt[]; value?: string; onChange?: (id: string, created?: PickOpt) => void; name?: string; id?: string; required?: boolean; filterText?: boolean; onCreated?: (o: PickOpt) => void;
+export function PickOrCreate({ kind, options, value, onChange, name, id, required, filterText, onCreated, defaultValue }: {
+  kind: Kind; options: PickOpt[]; value?: string; onChange?: (id: string, created?: PickOpt) => void; name?: string; id?: string; required?: boolean; filterText?: boolean; onCreated?: (o: PickOpt) => void; defaultValue?: string;
 }) {
   const me = useMe(); const m = META[kind];
-  const [extra, setExtra] = useState<PickOpt[]>([]); const [inner, setInner] = useState(""); const [open, setOpen] = useState(false);
+  const [extra, setExtra] = useState<PickOpt[]>([]); const [inner, setInner] = useState(defaultValue ?? ""); const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null); const [busy, setBusy] = useState(false); const [err, setErr] = useState(""); const [q, setQ] = useState("");
   const list = [...options, ...extra.filter((e) => !options.some((o) => o.id === e.id))];
   const shown = q ? list.filter((o) => o.label.toLowerCase().includes(q.toLowerCase()) || o.id === (value ?? inner)) : list;

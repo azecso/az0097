@@ -1,6 +1,6 @@
 "use client";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { api, today } from "@/lib/client";
 import { MsgBox, useAction, useLoad } from "@/components/ui";
 import { PickOrCreate } from "@/components/pick";
@@ -11,37 +11,44 @@ interface Cash { id: string; name: string; currency: string; kind: string }
 interface Loc { id: string; name: string; kind: string }
 interface Charge { kind: string; description: string; amount: string; capitalize: boolean }
 interface Line { productId: string; uom: string; qty: string; unitPrice: string; locationId: string }
-export default function NewPurchase() {
+function Inner() {
   const router = useRouter(); const { msg, busy, run } = useAction();
   const [newProds, setNewProds] = useState<Prod[]>([]); const prodsLoaded = useLoad<Prod[]>("/api/products", []).data, sup = useLoad<Contact[]>("/api/contacts?kind=SUPPLIER", []).data; const prods = [...prodsLoaded, ...newProds];
   const cash = useLoad<Cash[]>("/api/cash-accounts", []).data, locs = useLoad<Loc[]>("/api/locations", []).data;
+  const sp = useSearchParams(); const editId = sp.get("edit"); const srcId = editId ?? sp.get("copy"); const ex = useLoad<any>(srcId ? `/api/purchases/${srcId}` : null, null).data; const ed = editId ? ex : null;
   const [cur, setCur] = useState("IQD"); const [type, setType] = useState("CASH");
   const policy = useLoad<{ landedCostPolicy: string } | null>("/api/company", null).data?.landedCostPolicy ?? "EXCLUDE";
   const [charges, setCharges] = useState<Charge[]>([]);
   const [lines, setLines] = useState<Line[]>([{ productId: "", uom: "", qty: "", unitPrice: "", locationId: "" }]);
+  const tr = (v: string | null | undefined) => (v && v.includes(".") ? v.replace(/\.?0+$/, "") : v ?? "");
+  useEffect(() => { if (!ex || (editId && ex.status !== "DRAFT")) return; setType(ex.paymentType); setCur(ex.currency);
+    setLines(ex.lines.map((l: any) => ({ productId: l.productId, uom: l.uom, qty: tr(l.qty), unitPrice: tr(l.unitPrice), locationId: l.locationId ?? "" })));
+    setCharges((ex.charges ?? []).map((c: any) => ({ kind: c.kind, description: c.description ?? "", amount: tr(c.amount), capitalize: !!c.capitalize }))); }, [ex]);
   const upd = (i: number, k: keyof Line, v: string) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, [k]: v, ...(k === "productId" ? { uom: prods.find((p) => p.id === v)?.baseUom ?? "" } : {}) } : l)));
   async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault(); const f = new FormData(e.currentTarget);
-    const r = await run(() => api<{ id: string }>("/api/purchases", { method: "POST", body: { supplierId: String(f.get("supplier")), docDate: String(f.get("date")), paymentType: type,
+    const payload = { supplierId: String(f.get("supplier")), docDate: String(f.get("date")), paymentType: type,
       cashAccountId: type === "CASH" ? String(f.get("cash")) : null, dueDate: type === "CREDIT" && f.get("due") ? String(f.get("due")) : null, currency: cur, exchangeRate: cur === "IQD" ? null : String(f.get("rate") || "") || null,
-      supplierInvoiceNo: String(f.get("inv") ?? "") || null, lines: lines.map((l) => ({ productId: l.productId, uom: l.uom, qty: l.qty, unitPrice: l.unitPrice, locationId: l.locationId || null })), charges: charges.filter((c) => c.amount).map((c) => ({ kind: c.kind, description: c.description || null, amount: c.amount, capitalize: c.capitalize })) } }), "تم حفظ المسودة");
+      supplierInvoiceNo: String(f.get("inv") ?? "") || null, lines: lines.map((l) => ({ productId: l.productId, uom: l.uom, qty: l.qty, unitPrice: l.unitPrice, locationId: l.locationId || null })), charges: charges.filter((c) => c.amount).map((c) => ({ kind: c.kind, description: c.description || null, amount: c.amount, capitalize: c.capitalize })) };
+    if (editId) { if (!ex) return; const u = await run(() => api(`/api/purchases/${editId}`, { method: "PUT", body: { ...payload, version: ex.version } }), "تم حفظ التعديل"); if (u !== undefined) router.push(`/purchases/${editId}`); return; }
+    const r = await run(() => api<{ id: string }>("/api/purchases", { method: "POST", body: payload }), "تم حفظ المسودة");
     if (r) router.push(`/purchases/${r.id}`);
   }
   return (<>
-    <h1>فاتورة شراء جديدة</h1>
+    <h1>{editId ? "تعديل فاتورة شراء (مسودة)" : sp.get("copy") ? "فاتورة شراء مصحَّحة (نسخة جديدة)" : "فاتورة شراء جديدة"}</h1>{editId && ex && ex.status !== "DRAFT" && <div className="msg err">لا يمكن تعديل مستند مرحّل؛ استخدم «تصحيح».</div>}
     <p>تُحفظ كمسودة، ولا يصدر رقمها النهائي ولا تدخل البضاعة للمخزون إلا عند الترحيل. سعر شراء المادة وحده يدخل تكلفة المخزون؛ النقل مصروف منفصل.</p>
-    <form onSubmit={save} className="card" style={{ display: "grid", gap: 12 }}>
+    <form key={ex?.id ?? "new"} onSubmit={save} className="card" style={{ display: "grid", gap: 12 }}>
       <div className="row">
-        <div><label htmlFor="s">المورد</label><PickOrCreate kind="supplier" filterText id="s" name="supplier" required options={sup.map((s) => ({ id: s.id, label: s.name }))} /></div>
-        <div><label htmlFor="d">التاريخ</label><input id="d" name="date" type="date" defaultValue={today()} required /></div>
-        <div><label htmlFor="i">رقم فاتورة المورد</label><input id="i" name="inv" dir="ltr" /></div>
+        <div><label htmlFor="s">المورد</label><PickOrCreate kind="supplier" filterText id="s" name="supplier" required defaultValue={ex?.supplierId} options={sup.map((s) => ({ id: s.id, label: s.name }))} /></div>
+        <div><label htmlFor="d">التاريخ</label><input id="d" name="date" type="date" defaultValue={ed?.docDate ?? today()} required /></div>
+        <div><label htmlFor="i">رقم فاتورة المورد</label><input id="i" name="inv" dir="ltr" defaultValue={ed?.supplierInvoiceNo ?? ""} /></div>
       </div>
       <div className="row">
         <div><label htmlFor="t">الدفع</label><select id="t" value={type} onChange={(e) => setType(e.target.value)}><option value="CASH">نقدي</option><option value="CREDIT">آجل</option></select></div>
         <div><label htmlFor="c">العملة</label><select id="c" value={cur} onChange={(e) => setCur(e.target.value)}><option>IQD</option><option>USD</option></select></div>
-        {cur === "USD" && <div><label htmlFor="r">سعر الصرف (IQD لكل 1 USD) — اتركه فارغاً لسعر اليوم</label><input id="r" name="rate" inputMode="decimal" dir="ltr" /></div>}
-        {type === "CASH" ? <div><label htmlFor="ca">الصندوق</label><select id="ca" name="cash" required>{cash.filter((c) => c.currency === cur && c.kind !== "PARTNER_CUSTODY").map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-          : <div><label htmlFor="du">تاريخ الاستحقاق</label><input id="du" name="due" type="date" /></div>}
+        {cur === "USD" && <div><label htmlFor="r">سعر الصرف (IQD لكل 1 USD) — اتركه فارغاً لسعر اليوم</label><input id="r" name="rate" inputMode="decimal" dir="ltr" defaultValue={ex?.currency === "USD" ? tr(ex.exchangeRate) : ""} /></div>}
+        {type === "CASH" ? <div><label htmlFor="ca">الصندوق</label><select id="ca" name="cash" required defaultValue={ex?.cashAccountId ?? undefined}>{cash.filter((c) => c.currency === cur && c.kind !== "PARTNER_CUSTODY").map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+          : <div><label htmlFor="du">تاريخ الاستحقاق</label><input id="du" name="due" type="date" defaultValue={ed?.dueDate ?? ""} /></div>}
       </div>
       <h2>البنود</h2>
       {lines.map((l, i) => { const p = prods.find((x) => x.id === l.productId); return (
@@ -66,3 +73,4 @@ export default function NewPurchase() {
       <MsgBox msg={msg} /><button className="primary" disabled={busy}>حفظ كمسودة</button>
     </form></>);
 }
+export default function NewPurchase() { return <Suspense fallback={null}><Inner /></Suspense>; }
