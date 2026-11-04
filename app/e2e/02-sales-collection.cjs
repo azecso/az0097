@@ -19,7 +19,7 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   // sale through the UI
   await p.goto(B + "/sales/new"); await wait("#c"); await p.selectOption("#c", { label: "عميل الجملة" });
   const sels = await p.$$(".row.card select"); await sels[0].selectOption({ index: 1 });
-  const ins = await p.$$(".row.card input"); await ins[0].fill("100"); await ins[1].fill("10000");
+  const ins = []; for (const i of await p.$$(".row.card input")) if ((await i.getAttribute("inputmode")) === "decimal") ins.push(i); await ins[0].fill("100"); await ins[1].fill("10000");
   await p.click("button.primary:has-text('حفظ كمسودة')"); await p.waitForURL(/\/sales\/[0-9a-f-]{36}/); await wait("h1");
   ok("sales draft has DRAFT ref", (await p.textContent("h1")).includes("DRAFT-"));
   await p.click("button.primary:has-text('ترحيل')"); await p.waitForFunction(() => document.querySelector("h1").textContent.includes("INV-")); await wait(".card.grid .label");

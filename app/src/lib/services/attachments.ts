@@ -20,7 +20,7 @@ export function sniff(b: Buffer): { mime: string; ext: string } | null {
 
 const RULE: Record<string, [string, "create" | "edit_draft"]> = {
   company_logo: ["company", "edit_draft"], company_signature: ["company", "edit_draft"], product: ["products", "create"],
-  sales_invoice: ["sales", "create"], purchase_order: ["purchase", "create"], expense: ["expense", "create"], customer_receipt: ["voucher", "create"], supplier_payment: ["voucher", "create"],
+  sales_invoice: ["sales", "create"], purchase_order: ["purchase", "create"], expense: ["expense", "create"], customer_receipt: ["voucher", "create"], supplier_payment: ["voucher", "create"], capital_return: ["capital", "create"],
 };
 export const ENTITY_TYPES = Object.keys(RULE);
 const IMAGE_ONLY = new Set(["company_logo", "company_signature"]);
@@ -35,7 +35,7 @@ export async function saveAttachment(tx: Tx, who: Principal, actor: Actor, a: { 
   if (IMAGE_ONLY.has(a.entityType) && t.mime === "application/pdf") throw badRequest("FILE_TYPE", "الشعار والتوقيع صور فقط");
   if (a.entityType.startsWith("company_")) { if (a.entityId !== who.companyId) throw badRequest("BAD_ENTITY"); }
   else {
-    const table = { product: "products", sales_invoice: "sales_invoices", purchase_order: "purchase_orders", expense: "expenses", customer_receipt: "customer_receipts", supplier_payment: "supplier_payments" }[a.entityType]!;
+    const table = { product: "products", sales_invoice: "sales_invoices", purchase_order: "purchase_orders", expense: "expenses", customer_receipt: "customer_receipts", supplier_payment: "supplier_payments", capital_return: "capital_returns" }[a.entityType]!;
     if (!(await tx`SELECT 1 FROM ${tx(table)} WHERE id = ${a.entityId}`).length) throw notFound();       // RLS also scopes this to the tenant
   }
   const sha = createHash("sha256").update(a.data).digest("hex"), storage = `${sha}.${t.ext}`;           // content-addressed: no user-controlled path component

@@ -11,7 +11,7 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   ok("product with per-product carton factor", (await p.textContent("tbody")).includes("كارتون=12"));
   await p.goto(B + "/purchases/new"); await wait("#s"); await p.selectOption("#s", { label: "مورد الجملة" }); await p.selectOption("#t", "CREDIT");
   const sels = await p.$$(".row.card select"); await sels[0].selectOption({ index: 1 }); await sels[1].selectOption("كارتون");
-  const ins = await p.$$(".row.card input"); await ins[0].fill("2"); await ins[1].fill("6000");
+  const ins = []; for (const i of await p.$$(".row.card input")) if ((await i.getAttribute("inputmode")) === "decimal") ins.push(i); await ins[0].fill("2"); await ins[1].fill("6000");
   await p.click("button.primary:has-text('حفظ كمسودة')"); await p.waitForURL(/\/purchases\/[0-9a-f-]{36}/); await wait("h1");
   ok("draft saved with DRAFT number and status", (await p.textContent("h1")).includes("DRAFT-") && (await p.textContent("h1")).includes("مسودة"));
   await p.click("button.primary:has-text('ترحيل')"); await wait(".msg.ok"); await p.waitForFunction(() => document.querySelector("h1").textContent.includes("PO-"));

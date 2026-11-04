@@ -3,6 +3,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, today } from "@/lib/client";
 import { MsgBox, useAction, useLoad } from "@/components/ui";
+import { PickOrCreate } from "@/components/pick";
 
 interface Prod { id: string; code: string; name: string; baseUom: string; uoms: { uom: string }[] }
 interface Contact { id: string; name: string; kind: string }
@@ -12,7 +13,7 @@ interface Charge { kind: string; description: string; amount: string; capitalize
 interface Line { productId: string; uom: string; qty: string; unitPrice: string; locationId: string }
 export default function NewPurchase() {
   const router = useRouter(); const { msg, busy, run } = useAction();
-  const prods = useLoad<Prod[]>("/api/products", []).data, sup = useLoad<Contact[]>("/api/contacts?kind=SUPPLIER", []).data;
+  const [newProds, setNewProds] = useState<Prod[]>([]); const prodsLoaded = useLoad<Prod[]>("/api/products", []).data, sup = useLoad<Contact[]>("/api/contacts?kind=SUPPLIER", []).data; const prods = [...prodsLoaded, ...newProds];
   const cash = useLoad<Cash[]>("/api/cash-accounts", []).data, locs = useLoad<Loc[]>("/api/locations", []).data;
   const [cur, setCur] = useState("IQD"); const [type, setType] = useState("CASH");
   const policy = useLoad<{ landedCostPolicy: string } | null>("/api/company", null).data?.landedCostPolicy ?? "EXCLUDE";
@@ -31,7 +32,7 @@ export default function NewPurchase() {
     <p>تُحفظ كمسودة، ولا يصدر رقمها النهائي ولا تدخل البضاعة للمخزون إلا عند الترحيل. سعر شراء المادة وحده يدخل تكلفة المخزون؛ النقل مصروف منفصل.</p>
     <form onSubmit={save} className="card" style={{ display: "grid", gap: 12 }}>
       <div className="row">
-        <div><label htmlFor="s">المورد</label><select id="s" name="supplier" required><option value="">اختر…</option>{sup.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
+        <div><label htmlFor="s">المورد</label><PickOrCreate kind="supplier" filterText id="s" name="supplier" required options={sup.map((s) => ({ id: s.id, label: s.name }))} /></div>
         <div><label htmlFor="d">التاريخ</label><input id="d" name="date" type="date" defaultValue={today()} required /></div>
         <div><label htmlFor="i">رقم فاتورة المورد</label><input id="i" name="inv" dir="ltr" /></div>
       </div>
@@ -45,7 +46,7 @@ export default function NewPurchase() {
       <h2>البنود</h2>
       {lines.map((l, i) => { const p = prods.find((x) => x.id === l.productId); return (
         <div className="row card" key={i}>
-          <div><label>المادة</label><select value={l.productId} onChange={(e) => upd(i, "productId", e.target.value)} required><option value="">اختر…</option>{prods.map((x) => <option key={x.id} value={x.id}>{x.code} — {x.name}</option>)}</select></div>
+          <div><label>المادة</label><PickOrCreate kind="product" filterText options={prods.map((x) => ({ id: x.id, label: `${x.code} — ${x.name}` }))} value={l.productId} onChange={(v) => upd(i, "productId", v)} required onCreated={(o) => { void api<Prod[]>("/api/products").then((all) => { const p = all.find((x) => x.id === o.id); if (p) { setNewProds((x) => [...x, p]); upd(i, "uom", p.baseUom); } }); }} /></div>
           <div><label>الوحدة</label><select value={l.uom} onChange={(e) => upd(i, "uom", e.target.value)}>{p && [p.baseUom, ...p.uoms.map((u) => u.uom)].map((u) => <option key={u}>{u}</option>)}</select></div>
           <div><label>الكمية</label><input value={l.qty} onChange={(e) => upd(i, "qty", e.target.value)} inputMode="decimal" dir="ltr" required /></div>
           <div><label>سعر الوحدة ({cur})</label><input value={l.unitPrice} onChange={(e) => upd(i, "unitPrice", e.target.value)} inputMode="decimal" dir="ltr" required /></div>

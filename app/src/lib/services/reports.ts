@@ -44,7 +44,7 @@ export async function supplierStatement(tx: Tx, supplierId: string) {
 }
 
 export const payablesAging = (tx: Tx) => tx`
-  SELECT po.id, po.doc_no AS "docNo", c.name AS supplier, po.currency, po.total::text AS total, po.due_date::text AS "dueDate",
+  SELECT po.id, po.doc_no AS "docNo", c.name AS supplier, c.id AS "supplierId", po.currency, po.total::text AS total, po.due_date::text AS "dueDate",
          GREATEST(0, CURRENT_DATE - po.due_date) AS "daysOverdue",
          (po.total - COALESCE((SELECT sum(a.amount) FROM supplier_payment_allocations a JOIN supplier_payments sp ON sp.id = a.payment_id WHERE a.purchase_id = po.id AND sp.status = 'POSTED'), 0)
                    - COALESCE((SELECT sum(r.total_orig) FROM purchase_returns r WHERE r.purchase_id = po.id AND r.status = 'POSTED' AND r.settlement = 'REDUCE_PAYABLE'), 0))::text AS outstanding

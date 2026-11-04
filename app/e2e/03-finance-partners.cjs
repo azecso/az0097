@@ -12,7 +12,7 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   await p.click("td button.primary:has-text('اعتماد')"); await p.waitForFunction(() => document.body.textContent.includes("CP-")); await p.reload(); await wait(".grid .value");
   ok("capital 10,000,000 requested and approved by the owner", (await p.textContent(".grid")).includes("10,000,000"));
   // expense (accrued) through UI
-  await p.goto(B + "/expenses"); await wait("#a"); await p.fill("#de", "إيجار المكتب"); await p.fill("#a", "250000"); await p.selectOption("#m", "ACCRUED"); await p.click("form.card button.primary"); await wait(".msg.ok");
+  await p.goto(B + "/expenses"); await wait("#a"); await p.fill("#de", "إيجار المكتب"); await p.fill("#a", "250000"); await p.selectOption("#c", { index: 1 }); await p.selectOption("#m", "ACCRUED"); await p.click("form.card button.primary"); await wait(".msg.ok");
   await p.click("td button.primary:has-text('ترحيل')"); await p.waitForFunction(() => document.body.textContent.includes("EX-")); ok("accrued expense posted (EX- number)", true);
   await p.waitForSelector("td input[aria-label='مبلغ السداد']"); await p.fill("td input[aria-label='مبلغ السداد']", "100000"); await p.click("td button:has-text('سداد')"); await p.waitForFunction(() => document.body.textContent.includes("تم السداد"));
   await p.reload(); await p.waitForFunction(() => document.body.textContent.includes("150,000"), null, { timeout: 15000 }).catch(() => {}); ok("partial settlement leaves 150,000 due", (await p.textContent("tbody")).includes("150,000"));

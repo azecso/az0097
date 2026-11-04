@@ -25,7 +25,7 @@ const ACCOUNTS: Array<[string, string, string, "DEBIT" | "CREDIT", boolean?]> = 
 const SEQUENCES: Array<[string, string]> = [
   ["sales_invoice", "INV"], ["sales_quote", "QT"], ["delivery_note", "DN"], ["sales_return", "SR"], ["customer_receipt", "RC"],
   ["purchase_order", "PO"], ["purchase_receipt", "GR"], ["purchase_return", "PR"], ["supplier_payment", "PV"],
-  ["cash_transfer", "TR"], ["expense", "EX"], ["capital", "CP"], ["profit_settlement", "PS"], ["journal_entry", "JE"],
+  ["cash_transfer", "TR"], ["expense", "EX"], ["capital", "CP"], ["capital_return", "CR"], ["profit_settlement", "PS"], ["journal_entry", "JE"],
 ];
 
 export async function bootstrapCompany(db: postgres.Sql, o: { companyName: string; ownerUsername: string; ownerDisplayName?: string; ownerPassword: string }) {

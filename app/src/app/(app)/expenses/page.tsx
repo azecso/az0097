@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { createDraft, useRefList } from "@/lib/offline/use";
+import { PickOrCreate } from "@/components/pick";
 import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
 
 interface E { id: string; draftRef: string; docNo: string | null; docDate: string; category: string; description: string; currency: string; amount: string; paymentMode: string; partnerTreatment: string | null; status: string; outstanding: string }
@@ -24,7 +25,7 @@ export default function Expenses() {
     {can(me, "expense:create") && <form className="card" onSubmit={create} style={{ display: "grid", gap: 12 }}>
       <div className="row">
         <div><label htmlFor="d">التاريخ</label><input id="d" name="date" type="date" defaultValue={today()} /></div>
-        <div><label htmlFor="c">التصنيف</label><select id="c" name="cat" required>{cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+        <div><label htmlFor="c">التصنيف</label><PickOrCreate kind="category" id="c" name="cat" required options={cats.map((c) => ({ id: c.id, label: c.name }))} /></div>
         <div><label htmlFor="de">البيان</label><input id="de" name="desc" required minLength={2} /></div>
         <div><label htmlFor="cu">العملة</label><select id="cu" value={cur} onChange={(e) => setCur(e.target.value)}><option>IQD</option><option>USD</option></select></div>
         {cur === "USD" && <div><label htmlFor="r">سعر الصرف</label><input id="r" name="rate" dir="ltr" inputMode="decimal" /></div>}

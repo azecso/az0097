@@ -3,7 +3,7 @@
 نظام ويب عربي (RTL) لإدارة المبيعات والمشتريات والمخزون ورأس المال والشراكة 50/50.
 المتطلبات: [SRS](docs/phase-0/README.md) — التصميم المعتمد في `docs/phase-0`، وتقرير التنفيذ في [`docs/phase-1/REPORT.md`](docs/phase-1/REPORT.md).
 
-**الحالة:** المراحل 0–6 منجزة (تقارير في `docs/phase-1` … `docs/phase-6`). **لم يُنشر بعد على Staging** ولم تُشغَّل صورة Docker هنا — راجع [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) لمصفوفة القبول والفجوات المعروفة.
+**الحالة:** المراحل 0–7 منجزة (تقارير في `docs/phase-1` … `docs/phase-7`). **لم يُنشر بعد على Staging** ولم تُشغَّل صورة Docker هنا — راجع [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) لمصفوفة القبول والفجوات المعروفة.
 
 الوثائق: [`RUNBOOK`](docs/RUNBOOK.md) (تشغيل/نسخ/استعادة) · [`DEPLOYMENT`](docs/DEPLOYMENT.md) (VPS) · [`SECURITY`](docs/SECURITY.md) · [`ACCEPTANCE`](docs/ACCEPTANCE.md).
 

@@ -17,7 +17,7 @@ for SC in e2e/0*.cjs; do
   APPURL="$(echo "$ADMIN" | sed -E 's#//[^@]*@#//erp_app:e2e-app-pw@#')/$DB"
   DATABASE_URL="$APPURL" COOKIE_SECURE=false REQUIRE_OWNER_2FA=false UPLOAD_DIR="$PWD/e2e/out/uploads" PORT="$PORT" NEXT_TELEMETRY_DISABLED=1 node node_modules/next/dist/bin/next start -p "$PORT" >"e2e/out/$NAME.server.log" 2>&1 &   # run next directly so $! is the real server (an npx wrapper would survive kill)
   SRV=$!; for i in $(seq 1 40); do curl -fsS "http://localhost:$PORT/api/health" >/dev/null 2>&1 && break; sleep 0.5; done
-  echo "=== $NAME ==="; ( cd e2e/out && E2E_BASE="http://localhost:$PORT" node "../$(basename "$SC")" ) | tee "e2e/out/$NAME.log"
+  echo "=== $NAME ==="; ( cd e2e/out && E2E_BASE="http://localhost:$PORT" node "../$(basename "$SC")" 2>&1 ) | tee "e2e/out/$NAME.log"
   grep -q "^FAIL\|SMOKE ERROR" "e2e/out/$NAME.log" && FAIL=1
   kill "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null; for i in $(seq 1 20); do curl -fsS "http://localhost:$PORT/api/health" >/dev/null 2>&1 || break; sleep 0.3; done
 done
