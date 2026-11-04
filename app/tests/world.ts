@@ -48,6 +48,7 @@ export async function makeWorld(): Promise<World> {
   R.repPurch = (await imp("@/app/api/reports/purchases/route")).GET;
   R.repBal = (await imp("@/app/api/reports/balances/route")).GET;
   R.cashLedger = (await imp("@/app/api/cash-ledger/route")).GET;
+  R.repCust = (await imp("@/app/api/reports/customers-summary/route")).GET;
   R.repMove = (await imp("@/app/api/reports/product-movement/route")).GET;
   R.statement = (await imp("@/app/api/contacts/[id]/statement/route")).GET;
   R.fx = (await imp("@/app/api/fx-rates/route")).POST;

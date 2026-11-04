@@ -111,3 +111,52 @@ export async function productMovement(tx: Tx, productId: string, from?: string, 
   const rows = mv.map((r) => { const q = d(r.qty as string); if (q.gt(0)) qin = qin.plus(q); else qout = qout.plus(q.abs()); bal = bal.plus(q); return { ...r, balance: bal.toString() }; });
   return { product: p, opening: o!, rows, totals: { qtyIn: qin.toString(), qtyOut: qout.toString() }, closing: bal.toString() };
 }
+
+/** Money a party paid/advanced that is NOT yet tied to an invoice (customer credit / supplier advance), per party+currency. = open invoices − ledger balance. */
+export async function unappliedCredits(tx: Tx, side: "debtors" | "creditors") {
+  const all = (side === "debtors" ? await receivablesAging(tx) : await payablesAging(tx)) as unknown as Record<string, any>[];
+  const idKey = side === "debtors" ? "customerId" : "supplierId";
+  const led = await tx`SELECT c.id, COALESCE(jl.currency, 'IQD') AS currency,
+      sum(CASE WHEN ${side === "debtors"} THEN (CASE WHEN jl.debit_base > 0 THEN 1 ELSE -1 END) ELSE (CASE WHEN jl.credit_base > 0 THEN 1 ELSE -1 END) END * COALESCE(jl.amount_orig, jl.debit_base + jl.credit_base))::text AS bal
+    FROM journal_lines jl JOIN accounts a ON a.id = jl.account_id JOIN contacts c ON c.id = jl.contact_id
+    WHERE a.code = ANY(${side === "debtors" ? ["1200", "2400"] : ["2100"]}) GROUP BY c.id, COALESCE(jl.currency, 'IQD')`;
+  const open = new Map<string, Decimal>();
+  for (const r of all.filter((x) => d(x.outstanding).gt(0))) { const k = `${r[idKey]}|${r.currency}`; open.set(k, (open.get(k) ?? d(0)).plus(d(r.outstanding))); }
+  const out = new Map<string, Decimal>();
+  for (const l of led as unknown as { id: string; currency: string; bal: string }[]) {
+    const k = `${l.id}|${l.currency}`; const credit = (open.get(k) ?? d(0)).minus(d(l.bal)); if (credit.gt(0)) out.set(k, credit);
+  }
+  return out;
+}
+
+/** Oldest-first notional cover of open invoices by the party's unapplied credit: invoiceId → amount of its outstanding that the credit already pays. */
+export function coverByCredit(rows: { id: string; partyId: string; currency: string; status: string; outstanding: string | null; date: string }[], credits: Map<string, Decimal>) {
+  const left = new Map(credits); const cover = new Map<string, string>();
+  for (const r of [...rows].filter((x) => x.status === "POSTED" && x.outstanding && d(x.outstanding).gt(0)).sort((a, b) => a.date.localeCompare(b.date))) {
+    const k = `${r.partyId}|${r.currency}`; const avail = left.get(k); if (!avail || avail.lte(0)) continue;
+    const take = Decimal.min(avail, d(r.outstanding!)); cover.set(r.id, take.toString()); left.set(k, avail.minus(take));
+  }
+  return cover;
+}
+
+/** One row per customer (and currency): total sales, returns, paid (allocated + unallocated receipts) and what is still owed. */
+export async function customersSummary(tx: Tx, partyId?: string) {
+  const rows = await tx`
+    SELECT c.id AS "partyId", c.name AS party, si.currency, count(*)::int AS invoices,
+      sum(si.net)::text AS sales,
+      COALESCE(sum((SELECT sum(value_orig) FROM sales_returns r WHERE r.invoice_id = si.id AND r.status = 'POSTED')), 0)::text AS returns,
+      COALESCE(sum((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED')), 0)::text AS allocated
+    FROM sales_invoices si JOIN contacts c ON c.id = si.customer_id WHERE si.status = 'POSTED' AND (${partyId ?? null}::uuid IS NULL OR c.id = ${partyId ?? null}::uuid)
+    GROUP BY c.id, c.name, si.currency ORDER BY c.name`;
+  const credits = await unappliedCredits(tx, "debtors");
+  const open = await receivablesAging(tx) as unknown as Record<string, any>[];
+  const owed = new Map<string, Decimal>(); for (const r of open) { const k = `${r.customerId}|${r.currency}`; owed.set(k, (owed.get(k) ?? d(0)).plus(d(r.outstanding))); }
+  const out = (rows as unknown as Record<string, any>[]).map((r) => {
+    const k = `${r.partyId}|${r.currency}`; const credit = credits.get(k) ?? d(0); const openAmt = owed.get(k) ?? d(0);
+    const remaining = Decimal.max(0, openAmt.minus(credit)); const paid = d(r.sales).minus(d(r.returns)).minus(remaining);
+    return { partyId: r.partyId as string, party: r.party as string, currency: r.currency as string, invoices: r.invoices as number, sales: r.sales as string, returns: r.returns as string, paid: paid.toString(), unapplied: credit.toString(), remaining: remaining.toString(), status: remaining.lte(0) ? "PAID" : paid.gt(0) ? "PARTIAL" : "UNPAID" };
+  });
+  const t = new Map<string, { sales: Decimal; returns: Decimal; paid: Decimal; remaining: Decimal }>();
+  for (const r of out) { const e = t.get(r.currency) ?? { sales: d(0), returns: d(0), paid: d(0), remaining: d(0) }; e.sales = e.sales.plus(d(r.sales)); e.returns = e.returns.plus(d(r.returns)); e.paid = e.paid.plus(d(r.paid)); e.remaining = e.remaining.plus(d(r.remaining)); t.set(r.currency, e); }
+  return { rows: out, totals: [...t].map(([currency, e]) => ({ currency, sales: e.sales.toString(), returns: e.returns.toString(), paid: e.paid.toString(), remaining: e.remaining.toString() })) };
+}

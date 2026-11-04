@@ -8,17 +8,19 @@ import { GROUP_LABEL, TYPE_TITLE, apiOf, colsOf, exportOf, type RType } from "@/
 
 interface Opt { id: string; name: string; code?: string; kind?: string }
 const TYPES = Object.keys(TYPE_TITLE) as RType[];
-const cell = (v: unknown, kind?: string) => (v === null || v === undefined || v === "" ? "—" : kind === "money" ? money(v as string) : kind === "qty" ? Number(v).toLocaleString("en-US", { maximumFractionDigits: 4 }) : String(v));
+const STATUS_AR: Record<string, string> = { PAID: "مسدّد بالكامل", PARTIAL: "مسدّد جزئياً", UNPAID: "غير مسدّد" };
+const cell = (v: unknown, kind?: string) => (typeof v === "string" && STATUS_AR[v] ? STATUS_AR[v] : v === null || v === undefined || v === "" ? "—" : kind === "money" ? money(v as string) : kind === "qty" ? Number(v).toLocaleString("en-US", { maximumFractionDigits: 4 }) : String(v));
 
 function Inner() {
   const tab = useSearchParams().get("tab"); const [type, setType] = useState<RType>((TYPES as string[]).includes(tab ?? "") ? (tab as RType) : "sales"); const [group, setGroup] = useState("invoice"); const [from, setFrom] = useState(""); const [to, setTo] = useState("");
   const [party, setParty] = useState(""); const [product, setProduct] = useState(""); const [overdue, setOverdue] = useState(false); const [summary, setSummary] = useState(false);
   const contacts = useRefList<Opt>("contacts", "/api/contacts").data; const prods = useRefList<Opt>("products", "/api/products").data;
-  const wantCustomer = type === "sales" || type === "debtors"; const parties = contacts.filter((c) => (wantCustomer ? c.kind !== "SUPPLIER" : c.kind !== "CUSTOMER"));
+  const wantCustomer = type === "sales" || type === "debtors" || type === "customers"; const parties = contacts.filter((c) => (wantCustomer ? c.kind !== "SUPPLIER" : c.kind !== "CUSTOMER"));
   const qs = useMemo(() => {
     const p = new URLSearchParams();
     if (type === "sales" || type === "purchases") { p.set("group", group); if (from) p.set("from", from); if (to) p.set("to", to); if (party) p.set("partyId", party); if (product) p.set("productId", product); }
     else if (type === "movement") { if (product) p.set("productId", product); if (from) p.set("from", from); if (to) p.set("to", to); }
+    else if (type === "customers") { if (party) p.set("partyId", party); }
     else { if (party) p.set("partyId", party); if (overdue) p.set("overdue", "1"); if (summary) p.set("summary", "1"); }
     return p.toString();
   }, [type, group, from, to, party, product, overdue, summary]);
@@ -42,10 +44,11 @@ function Inner() {
     {!ready ? <p>اختر المادة لعرض حركتها.</p> : <div className="card cards-as-list" style={{ marginTop: 12 }}>
       {type === "movement" && data?.product && <p><strong>{data.product.code} — {data.product.name}</strong> · رصيد افتتاحي: <span className="num">{cell(data.opening.qty, "qty")}</span> {data.product.baseUom} · الوارد <span className="num">{cell(data.totals.qtyIn, "qty")}</span> · الصادر <span className="num">{cell(data.totals.qtyOut, "qty")}</span> · الختامي <span className="num">{cell(data.closing, "qty")}</span></p>}
       <table><thead><tr>{cols.map((c) => <th key={c.key}>{c.label}</th>)}</tr></thead>
-        <tbody>{rows.map((r, i) => <tr key={r.key ?? r.docNo ?? i}>{cols.map((c) => <td key={c.key}><span className={c.kind ? "num" : ""}>{cell(r[c.key], c.kind)}</span></td>)}</tr>)}
+        <tbody>{rows.map((r, i) => <tr key={r.key ?? r.docNo ?? (r.partyId ? r.partyId + r.currency : i)} className={r.status === "PAID" ? "paidrow" : undefined}>{cols.map((c) => <td key={c.key}><span className={c.kind ? "num" : ""}>{cell(r[c.key], c.kind)}</span></td>)}</tr>)}
           {rows.length === 0 && <tr><td colSpan={cols.length}>لا توجد بيانات ضمن هذه الفلاتر</td></tr>}
           {(type === "sales" || type === "purchases") && tot && rows.length > 0 && <tr style={{ fontWeight: 700 }}>{cols.map((c, i) => <td key={c.key}>{i === 0 ? "الإجمالي" : c.key in tot ? <span className="num">{cell(tot[c.key], c.kind)}</span> : ""}</td>)}</tr>}
         </tbody></table>
+      {type === "customers" && tot && Array.isArray(tot) && <p>الإجمالي: {tot.map((t: any) => <strong key={t.currency}>مبيعات <span className="num">{money(t.sales)}</span> · مسدَّد <span className="num">{money(t.paid)}</span> · متبقٍ <span className="num">{money(t.remaining)}</span> {t.currency}&nbsp;&nbsp;</strong>)}</p>}
       {(type === "debtors" || type === "creditors") && Array.isArray(tot) && <p>الإجمالي: {tot.map((t: any) => <strong key={t.currency}><span className="num">{money(t.total)}</span> {t.currency}&nbsp;&nbsp;</strong>)}</p>}
       {(type === "sales" || type === "purchases") && <p style={{ fontSize: 12 }}>المبالغ بالدينار (القيمة الأساسية المسجّلة عند الترحيل){type === "purchases" && group === "product" ? " · مصاريف الشراء والمرتجعات غير موزعة على المواد" : ""}.</p>}
     </div>}

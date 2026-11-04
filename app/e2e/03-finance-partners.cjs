@@ -10,6 +10,7 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   // capital through the UI: request then approve
   await p.goto(B + "/capital"); await wait("#a"); await p.fill("#a", "10000000"); await p.fill("#r", "رأس مال ابتدائي"); await p.click("form.card:has(#k) button.primary"); await wait(".msg.ok");
   await p.click("td button.primary:has-text('اعتماد')"); await p.waitForFunction(() => document.body.textContent.includes("CP-")); await p.reload(); await wait(".grid .value");
+  await p.waitForFunction(() => document.querySelector(".grid").textContent.includes("10,000,000"), null, { timeout: 15000 }).catch(() => {});
   ok("capital 10,000,000 requested and approved by the owner", (await p.textContent(".grid")).includes("10,000,000"));
   // expense (accrued) through UI
   await p.goto(B + "/expenses"); await wait("#a"); await p.fill("#de", "إيجار المكتب"); await p.fill("#a", "250000"); await p.selectOption("#c", { index: 1 }); await p.selectOption("#m", "ACCRUED"); await p.click("form.card button.primary"); await wait(".msg.ok");

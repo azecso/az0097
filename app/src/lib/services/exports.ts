@@ -7,7 +7,7 @@ import { partnerStatement } from "./settlements";
 import { listExpenses } from "./expenses";
 import { listInvoices } from "./sales";
 import { listPurchases } from "./purchases";
-import { balancesReport, productMovement, purchasesReport, reportQuery, salesReport } from "./analytics";
+import { customersSummary, balancesReport, productMovement, purchasesReport, reportQuery, salesReport } from "./analytics";
 import { listCapitalReturns } from "./capital-returns";
 
 type Col = { header: string; key: string; width?: number; kind?: "money" | "qty" | "text" };
@@ -31,7 +31,7 @@ function addSheet(wb: ExcelJS.Workbook, title: string, cols: Col[], rows: Record
   return ws;
 }
 
-export const EXPORT_KINDS = ["stock", "trial-balance", "receivables", "payables", "customer-statement", "supplier-statement", "partner-statement", "sales", "purchases", "expenses", "journal", "cash", "sales-report", "purchases-report", "debtors", "creditors", "product-movement", "capital-returns"] as const;
+export const EXPORT_KINDS = ["stock", "trial-balance", "receivables", "payables", "customer-statement", "supplier-statement", "partner-statement", "sales", "purchases", "expenses", "journal", "cash", "sales-report", "purchases-report", "debtors", "creditors", "customers-summary", "product-movement", "capital-returns"] as const;
 export type ExportKind = (typeof EXPORT_KINDS)[number];
 
 export async function buildExport(tx: Tx, kind: ExportKind, id?: string | null, qs: URLSearchParams = new URLSearchParams()): Promise<{ filename: string; buffer: Buffer }> {
@@ -68,6 +68,9 @@ export async function buildExport(tx: Tx, kind: ExportKind, id?: string | null, 
     const r = await balancesReport(tx, kind, { partyId: qs.get("partyId") || undefined, overdueOnly: qs.get("overdue") === "1", summary: qs.get("summary") === "1" });
     if (r.mode === "summary") addSheet(wb, kind === "debtors" ? "المدينون" : "الدائنون", [{ header: "الجهة", key: "party", width: 28 }, { header: "العملة", key: "currency" }, { header: "عدد الفواتير", key: "docs", kind: "qty" }, { header: "المتبقي", key: "outstanding", kind: "money" }, { header: "أقصى تأخر (يوم)", key: "maxOverdue", kind: "qty" }], r.rows as never);
     else addSheet(wb, kind === "debtors" ? "المدينون" : "الدائنون", [{ header: "الفاتورة", key: "docNo" }, { header: "الجهة", key: "party", width: 28 }, { header: "العملة", key: "currency" }, { header: "الإجمالي", key: "total", kind: "money" }, { header: "المقبوض/المسدَّد", key: "paid", kind: "money" }, { header: "المتبقي", key: "outstanding", kind: "money" }, { header: "الاستحقاق", key: "dueDate" }, { header: "أيام التأخر", key: "daysOverdue", kind: "qty" }], r.rows as never);
+  } else if (kind === "customers-summary") {
+    const r = await customersSummary(tx, qs.get("partyId") || undefined);
+    addSheet(wb, "ملخص العملاء", [{ header: "العميل", key: "party", width: 28 }, { header: "العملة", key: "currency" }, { header: "عدد الفواتير", key: "invoices", kind: "qty" }, { header: "إجمالي المبيعات", key: "sales", kind: "money" }, { header: "المرتجعات", key: "returns", kind: "money" }, { header: "المسدَّد", key: "paid", kind: "money" }, { header: "المتبقي", key: "remaining", kind: "money" }], r.rows as never, ["sales", "returns", "paid", "remaining"]);
   } else if (kind === "product-movement") {
     const pid = qs.get("productId"); if (!pid) throw badRequest("ID_REQUIRED"); const m = await productMovement(tx, pid, qs.get("from") || undefined, qs.get("to") || undefined);
     addSheet(wb, "حركة صنف", [{ header: "التاريخ", key: "movedAt", width: 22 }, { header: "الحركة", key: "type" }, { header: "المستند", key: "docType" }, { header: "الموقع", key: "location" }, { header: "الكمية", key: "qty", kind: "qty" }, { header: "التكلفة", key: "cost", kind: "money" }, { header: "الرصيد", key: "balance", kind: "qty" }], m.rows as never);
