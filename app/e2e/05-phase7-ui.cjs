@@ -82,5 +82,10 @@ let P; const BASE = process.env.E2E_BASE || "http://localhost:3100";
   await p.goto(B + "/capital/returns"); await wait("h1"); await p.screenshot({ path: "mobile-returns.png", fullPage: true });
   for (const path of ["/reports", "/capital/returns"]) { await p.setViewportSize({ width: 390, height: 800 }); await p.goto(B + path); await wait("h1"); ok("mobile " + path + ": no horizontal scroll", await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)); }
   ok("no console/page errors", errs.length === 0); if (errs.length) out.push("ERRORS: " + errs.slice(0, 5).join(" | "));
+  // server unreachable on first load: a clear message + retry instead of an endless spinner
+  const q = await ctx.newPage(); await q.goto(B + "/login"); await q.evaluate(() => localStorage.clear());
+  await q.route("**/api/auth/me", (r) => r.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "DB_DOWN", message: "خدمة غير متاحة" } }) }));
+  await q.goto(B + "/"); await q.waitForSelector("text=تعذّر الاتصال", { timeout: 15000 }); ok("unreachable server shows an explanation, not an endless spinner", (await q.textContent("body")).includes("إعادة المحاولة"));
+  await q.unroute("**/api/auth/me"); await q.click("button:has-text('إعادة المحاولة')"); await q.waitForSelector("h1", { timeout: 15000 }); ok("retry recovers once the server answers", !(await q.textContent("body")).includes("تعذّر الاتصال"));
   console.log(out.join("\n")); await b.close();
 })().catch(async (e) => { console.log("SMOKE ERROR " + e.message); try { await P.screenshot({ path: "fail05.png", fullPage: true }); console.log("URL " + P.url() + "\n" + (await P.textContent("body")).slice(0, 600)); } catch {} process.exit(1); });

@@ -32,9 +32,11 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     mo.observe(document.body, { childList: true, subtree: true }); label();
     return () => { mo.disconnect(); cancelAnimationFrame(raf); };
   }, []);
+  const [bootError, setBootError] = useState(""); const [slow, setSlow] = useState(false); const [health, setHealth] = useState("");
   const [me, setMe] = useState<Me | null>(null); const path = usePathname(); const router = useRouter(); const off = useOffline(); const [fromCache, setFromCache] = useState(false); const [pin, setPin] = useState(""); const [pinErr, setPinErr] = useState(""); const [update, setUpdate] = useState<ServiceWorkerRegistration | null>(null);
   // The identity/permission list is not secret (the server re-checks every request). It is cached so the shell can open offline.
   const loadMe = useCallback(async () => {
+    setBootError("");
     try {
       const r = await api<Me & { csrf: string }>("/api/auth/me"); setCsrf(r.csrf); setMe(r); setFromCache(false);
       try { localStorage.setItem("erp-me", JSON.stringify({ companyId: r.companyId, user: r.user, permissions: r.permissions })); } catch { /* storage disabled */ }
@@ -43,6 +45,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) { localStorage.removeItem("erp-me"); window.location.href = "/login"; return; }
       try { const c = JSON.parse(localStorage.getItem("erp-me") ?? "null"); if (c) { setMe(c); setFromCache(true); return; } } catch { /* ignore */ }
+      if (e instanceof ApiError && (e.status === 0 || e.status >= 500)) { setBootError(e.message); return; }      // server/database unreachable: say so instead of an endless spinner
       window.location.href = "/login";
     }
   }, []);
@@ -59,7 +62,14 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       navigator.serviceWorker.addEventListener("controllerchange", () => { if (hadController && !reloaded) { reloaded = true; window.location.reload(); } });   // only for UPDATES, never for the first install
     }
   }, []);
-  if (!me) return <main className="login"><p>جارٍ التحميل…</p></main>;
+  useEffect(() => {          // still loading after 6 s: probe the server so the user sees WHY (sleeping host, database down...)
+    if (me) { setSlow(false); return; }
+    const t = setTimeout(async () => { setSlow(true); try { const r = await fetch("/api/health", { cache: "no-store", signal: AbortSignal.timeout(8000) }); const j = await r.json().catch(() => null); setHealth(r.ok && j?.ok ? "الخادم يعمل وقاعدة البيانات متصلة" : "الخادم يعمل لكن قاعدة البيانات غير متاحة"); } catch { setHealth("الخادم لا يستجيب (قد يكون في وضع الإسبات أو يُعاد تشغيله)"); } }, 6000);
+    return () => clearTimeout(t);
+  }, [me, bootError]);
+  if (!me) return <main className="login"><div className="card" style={{ textAlign: "center" }}><p>{bootError ? `تعذّر الاتصال: ${bootError}` : "جارٍ التحميل…"}</p>
+    {(slow || bootError) && <><p style={{ color: "var(--muted)" }}>{health || "جارٍ فحص الخادم…"}</p><p style={{ fontSize: 13, color: "var(--muted)" }}>الاستضافات المجانية تنام عند عدم الاستخدام وتحتاج حتى دقيقة للاستيقاظ. إن استمرت المشكلة راجع سجلات الخدمة.</p>
+      <button className="primary" onClick={() => { setSlow(false); setHealth(""); void loadMe(); }}>إعادة المحاولة</button></>}</div></main>;
   const items = NAV.filter((n) => (!n.owner || me.user.isOwner) && (!n.perm || can(me, n.perm)));
   const nav = items.map((n) => <Link key={n.href} href={n.href} aria-current={path === n.href || (n.href !== "/" && path.startsWith(n.href + "/")) ? "page" : undefined}>{n.label}</Link>);
   return (
