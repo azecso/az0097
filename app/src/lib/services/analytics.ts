@@ -142,7 +142,7 @@ export function coverByCredit(rows: { id: string; partyId: string; currency: str
 /** One row per customer (and currency): total sales, returns, paid (allocated + unallocated receipts) and what is still owed. */
 export async function customersSummary(tx: Tx, partyId?: string) {
   const rows = await tx`
-    SELECT c.id AS "partyId", c.name AS party, si.currency, count(*)::int AS invoices,
+    SELECT c.id AS "partyId", c.name AS party, si.currency, count(*)::int AS invoices, min(si.doc_date)::text AS "firstDate", max(si.doc_date)::text AS "lastDate",
       sum(si.net)::text AS sales,
       COALESCE(sum((SELECT sum(value_orig) FROM sales_returns r WHERE r.invoice_id = si.id AND r.status = 'POSTED')), 0)::text AS returns,
       COALESCE(sum((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED')), 0)::text AS allocated
@@ -154,7 +154,7 @@ export async function customersSummary(tx: Tx, partyId?: string) {
   const out = (rows as unknown as Record<string, any>[]).map((r) => {
     const k = `${r.partyId}|${r.currency}`; const credit = credits.get(k) ?? d(0); const openAmt = owed.get(k) ?? d(0);
     const remaining = Decimal.max(0, openAmt.minus(credit)); const paid = d(r.sales).minus(d(r.returns)).minus(remaining);
-    return { partyId: r.partyId as string, party: r.party as string, currency: r.currency as string, invoices: r.invoices as number, sales: r.sales as string, returns: r.returns as string, paid: paid.toString(), unapplied: credit.toString(), remaining: remaining.toString(), status: remaining.lte(0) ? "PAID" : paid.gt(0) ? "PARTIAL" : "UNPAID" };
+    return { partyId: r.partyId as string, party: r.party as string, currency: r.currency as string, invoices: r.invoices as number, invoiceDate: r.firstDate === r.lastDate ? (r.lastDate as string) : `${r.firstDate} ← ${r.lastDate}`, sales: r.sales as string, returns: r.returns as string, paid: paid.toString(), unapplied: credit.toString(), remaining: remaining.toString(), status: remaining.lte(0) ? "PAID" : paid.gt(0) ? "PARTIAL" : "UNPAID" };
   });
   const t = new Map<string, { sales: Decimal; returns: Decimal; paid: Decimal; remaining: Decimal }>();
   for (const r of out) { const e = t.get(r.currency) ?? { sales: d(0), returns: d(0), paid: d(0), remaining: d(0) }; e.sales = e.sales.plus(d(r.sales)); e.returns = e.returns.plus(d(r.returns)); e.paid = e.paid.plus(d(r.paid)); e.remaining = e.remaining.plus(d(r.remaining)); t.set(r.currency, e); }

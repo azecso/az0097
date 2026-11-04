@@ -160,7 +160,7 @@ describe("customer summary and credit-aware invoice list", () => {
     await w.api(w.owner, w.R.receiptPost, { method: "POST", params: { id: rc.body.id } });
     const sm = (await get(w.R.repCust, `/api/reports/customers-summary?partyId=${c4}`)).body;
     expect(sm.rows).toHaveLength(1);
-    expect(sm.rows[0]).toMatchObject({ party: "عميل رابع", currency: "IQD", invoices: 1, status: "PARTIAL" });
+    expect(sm.rows[0]).toMatchObject({ party: "عميل رابع", currency: "IQD", invoices: 1, invoiceDate: "2026-08-05", status: "PARTIAL" });
     expect(Number(sm.rows[0].sales)).toBe(3060000); expect(Number(sm.rows[0].paid)).toBe(2920000); expect(Number(sm.rows[0].remaining)).toBe(140000);
     const row = (await w.api(w.owner, w.R.invoices.GET)).body.find((x: any) => x.id === i1.id);
     expect(Number(row.outstanding)).toBe(3060000); expect(Number(row.creditCovered)).toBe(2920000);        // list shows 140,000 left (3,060,000 - 2,920,000 covered)
