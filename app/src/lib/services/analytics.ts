@@ -73,7 +73,22 @@ export async function balancesReport(tx: Tx, side: "debtors" | "creditors", q: {
   let rows = all.filter((r) => d(r.outstanding).gt(0));
   if (q.partyId) rows = rows.filter((r) => r[idKey] === q.partyId);
   if (q.overdueOnly) rows = rows.filter((r) => Number(r.daysOverdue) > 0);
-  const detail = rows.map((r) => ({ docNo: r.docNo, party: r[nameKey], currency: r.currency, total: r.total, outstanding: r.outstanding, dueDate: r.dueDate, daysOverdue: Number(r.daysOverdue) }));
+  const detail: { docNo: string; party: string; currency: string; total: string | null; outstanding: string; dueDate: string | null; daysOverdue: number }[] =
+    rows.map((r) => ({ docNo: r.docNo, party: r[nameKey], currency: r.currency, total: r.total, outstanding: r.outstanding, dueDate: r.dueDate, daysOverdue: Number(r.daysOverdue) }));
+  // Payments/receipts that were not allocated to an invoice (customer credit / supplier advance) are real money that reduces what is owed:
+  // the party's ledger balance minus the sum of its open invoices is exactly that unallocated amount. Showing it keeps this report equal to the statement.
+  if (!q.overdueOnly) {
+    const codes = side === "debtors" ? ["1200", "2400"] : ["2100"];
+    const led = await tx`SELECT c.id, c.name, COALESCE(jl.currency, 'IQD') AS currency,
+        sum(CASE WHEN ${side === "debtors"} THEN (CASE WHEN jl.debit_base > 0 THEN 1 ELSE -1 END) ELSE (CASE WHEN jl.credit_base > 0 THEN 1 ELSE -1 END) END * COALESCE(jl.amount_orig, jl.debit_base + jl.credit_base))::text AS bal
+      FROM journal_lines jl JOIN accounts a ON a.id = jl.account_id JOIN contacts c ON c.id = jl.contact_id
+      WHERE a.code = ANY(${codes}) AND (${q.partyId ?? null}::uuid IS NULL OR c.id = ${q.partyId ?? null}::uuid) GROUP BY c.id, c.name, COALESCE(jl.currency, 'IQD')`;
+    const open = new Map<string, Decimal>(); for (const r of all.filter((x) => d(x.outstanding).gt(0))) { const k = `${r[idKey]}|${r.currency}`; open.set(k, (open.get(k) ?? d(0)).plus(d(r.outstanding))); }
+    for (const l of led as unknown as { id: string; name: string; currency: string; bal: string }[]) {
+      const diff = d(l.bal).minus(open.get(`${l.id}|${l.currency}`) ?? 0);
+      if (diff.abs().gte("0.0001")) detail.push({ docNo: diff.lt(0) ? (side === "debtors" ? "رصيد دائن (دفعة غير مخصصة)" : "سلفة مورد (دفعة غير مخصصة)") : "فرق غير مخصص", party: l.name, currency: l.currency, total: null, outstanding: diff.toString(), dueDate: null, daysOverdue: 0 });
+    }
+  }
   const byCur = new Map<string, Decimal>();
   for (const r of detail) byCur.set(r.currency, (byCur.get(r.currency) ?? d(0)).plus(d(r.outstanding)));
   const totals = [...byCur].map(([currency, total]) => ({ currency, total: total.toString() })).sort((a, b) => a.currency.localeCompare(b.currency));
