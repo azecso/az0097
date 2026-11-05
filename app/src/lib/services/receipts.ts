@@ -196,7 +196,7 @@ void Decimal;
 
 // ---- single-document readers (print / PDF) ----
 export async function getReceipt(tx: Tx, id: string) {
-  const [r] = await tx`SELECT r.id, r.doc_no AS "docNo", r.draft_ref AS "draftRef", r.doc_date::text AS "docDate", r.kind, c.name AS "customerName", ca.name AS "cashAccount", r.currency, r.exchange_rate_snapshot::text AS "exchangeRate",
+  const [r] = await tx`SELECT r.id, r.doc_no AS "docNo", r.draft_ref AS "draftRef", r.doc_date::text AS "docDate", r.kind, c.name AS "customerName", c.phones AS "customerPhones", c.address AS "customerAddress", ca.name AS "cashAccount", r.currency, r.exchange_rate_snapshot::text AS "exchangeRate",
       r.amount::text AS amount, r.notes, r.status FROM customer_receipts r JOIN contacts c ON c.id = r.customer_id LEFT JOIN cash_accounts ca ON ca.id = r.cash_account_id WHERE r.id = ${id}`;
   if (!r) throw notFound();
   const allocations = await tx`SELECT si.doc_no AS "invoiceNo", a.amount::text AS amount FROM receipt_allocations a JOIN sales_invoices si ON si.id = a.invoice_id WHERE a.receipt_id = ${id}`;

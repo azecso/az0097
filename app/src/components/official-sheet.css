@@ -39,10 +39,12 @@
 .inv table.sum { width: 100%; border-collapse: collapse; } .inv table.sum td { padding: 4px 8px; border-bottom: 1px solid var(--line); } .inv table.sum td:last-child { text-align: end; font-weight: 700; }
 .inv table.sum tr.net td { background: var(--navy); color: #fff; font-size: 13.5px; border-color: var(--navy); } .inv table.sum tr.due td { background: #fff4da; color: var(--navy); font-size: 13.5px; border: 1px solid var(--gold); }
 
-.inv .sign { display: grid; grid-template-columns: 1fr 44mm 1fr; gap: 14px; margin-top: 16px; align-items: end; text-align: center; }
-.inv .sign .who { border-top: 1.5px solid var(--navy); padding-top: 5px; margin-top: 20mm; display: flex; flex-direction: column; }
-.inv .sign .who span { color: #5a6577; font-size: 11px; } .inv .sign .who b { color: var(--navy); font-size: 13px; }
-.inv .sign .seal { height: 40mm; display: grid; place-items: center; } .inv .sign .seal img { max-width: 40mm; max-height: 40mm; object-fit: contain; }
+.inv .sign { display: grid; grid-template-columns: 1fr 1fr; gap: 34mm; margin-top: 10px; text-align: center; }
+.inv .sigcol { position: relative; height: 68mm; }
+.inv .who { border-top: 1.5px solid var(--navy); padding-top: 5px; margin-top: 21mm; display: flex; flex-direction: column; }
+.inv .who span { color: #5a6577; font-size: 11px; } .inv .who b { color: var(--navy); font-size: 13px; }
+.inv .sig { position: absolute; top: 3mm; left: 50%; width: 42mm; transform: translateX(-50%) rotate(-2deg); }
+.inv .seal { position: absolute; top: 35mm; left: 50%; width: 31mm; opacity: .8; transform: translateX(-62%) rotate(-14deg); }
 
 .inv .foot { position: fixed; inset-inline: 12mm; bottom: -23mm; z-index: 2; border-top: 2px solid var(--gold); padding-top: 4px; font-size: 10.5px; color: #3a4556; text-align: center; background: #fff; }
 .inv .foot b { color: var(--navy); } .inv .foot .row2 { display: flex; flex-wrap: wrap; gap: 4px 14px; justify-content: center; margin-top: 2px; }

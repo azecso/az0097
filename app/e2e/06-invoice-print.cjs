@@ -40,6 +40,17 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
     if (pc > 1) { ok(`${n} lines: totals and signatures appear ONLY on the last page`, !/المتبقي/.test(first) && !/المستلم/.test(first)); ok(`${n} lines: the table header repeats on every page`, Array.from({ length: pc }, (_, i) => txt(`invoice-${n}`, i + 1)).every((t) => t.includes("اسم الصنف"))); }
     execFileSync("pdftoppm", ["-r", "70", "-png", `inv/invoice-${n}.pdf`, `inv/invoice-${n}`]);
   }
+  // signature + stamp are images placed automatically on the last page (logo, watermark, signature, stamp)
+  const imgs = (name, n) => execFileSync("pdfimages", ["-list", "-f", String(n), "-l", String(n), `inv/${name}.pdf`], { encoding: "utf8" }).split("\n").filter((l) => /^\s*\d+\s+\d+\s+image/.test(l)).length;
+  ok("invoice: logo, watermark, accountant signature and company stamp are all embedded on the last page", imgs("invoice-1", 1) >= 4);
+  // receipt voucher: same official design
+  const rcAmt = "1500000"; const rc2 = await post("/api/customer-receipts", { customerId: cust.id, docDate: "2026-11-05", cashAccountId: cash.id, currency: "IQD", amount: "2000000", allocations: [] });
+  await post(`/api/customer-receipts/${rc2.id}/post`, {});
+  const rb = await ctx.request.get(B + `/api/pdf?path=${encodeURIComponent("/print/receipt/" + rc2.id)}`); const rbuf = await rb.body(); fs.writeFileSync("inv/receipt.pdf", rbuf);
+  const rtxt = execFileSync("pdftotext", ["inv/receipt.pdf", "-"], { encoding: "utf8" });
+  ok("receipt: one official A4 page with customer, accountant, amount in words and the unallocated-credit note", pages(rbuf) === 1 && rtxt.includes("مروان المرعي") && /owner/.test(rtxt) && rtxt.includes("مليون") && rtxt.includes("07705550101") && rtxt.includes("info@alshams.example"));
+  ok("receipt: signature and stamp embedded", execFileSync("pdfimages", ["-list", "inv/receipt.pdf"], { encoding: "utf8" }).split("\n").filter((l) => /^\s*\d+\s+\d+\s+image/.test(l)).length >= 4);
+  execFileSync("pdftoppm", ["-r", "70", "-png", "inv/receipt.pdf", "inv/receipt"]);
   ok("50 lines span several pages, 1 line fits a single page", results[1] === 1 && results[50] >= 2);
   console.log(out.join("\n")); console.log("PAGES " + JSON.stringify(results)); await b.close();
 })().catch((e) => { console.log("SMOKE ERROR " + e.message); process.exit(1); });
