@@ -208,3 +208,14 @@ describe("receipt print data: per-invoice remaining after the receipt", () => {
     expect((await w.api(w.owner, w.R.receiptId.GET, { params: { id: r1 } })).body.allocations[0].remaining).toBe("60000");
   });
 });
+
+describe("supplier payment print data: per-invoice remaining after the payment", () => {
+  it("a part payment shows the invoice as partly paid with the remainder", async () => {
+    const P = await w.mkProduct("RP13"); const b = await w.buy({ product: P, qty: "10", price: "10000", date: "2026-09-20", type: "CREDIT" });     // 100,000 owed
+    const sup = (await w.api(w.owner, w.R.purchaseId.GET, { params: { id: b.id } })).body;
+    const pay = await w.api(w.owner, w.R.payments.POST, { method: "POST", body: { supplierId: sup.supplierId, docDate: "2026-09-21", cashAccountId: w.ids.cashIQD, currency: "IQD", amount: "30000", allocations: [{ purchaseId: b.id, amount: "30000" }] } });
+    expect((await w.api(w.owner, w.R.paymentPost, { method: "POST", params: { id: pay.body.id } })).status).toBe(200);
+    const g = (await w.api(w.owner, w.R.paymentId.GET, { params: { id: pay.body.id } })).body.allocations[0];
+    expect(g).toMatchObject({ invoiceTotal: "100000.0000", amount: "30000.0000", paidToDate: "30000.0000", remaining: "70000", state: "PARTIAL" });
+  });
+});

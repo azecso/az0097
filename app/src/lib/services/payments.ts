@@ -114,6 +114,14 @@ export async function getSupplierPayment(tx: Tx, id: string) {
   const [p] = await tx`SELECT sp.id, sp.doc_no AS "docNo", sp.draft_ref AS "draftRef", sp.doc_date::text AS "docDate", c.name AS "supplierName", c.phones AS "supplierPhones", c.address AS "supplierAddress", ca.name AS "cashAccount", sp.currency, sp.exchange_rate_snapshot::text AS "exchangeRate",
       sp.amount::text AS amount, sp.notes, sp.status FROM supplier_payments sp JOIN contacts c ON c.id = sp.supplier_id JOIN cash_accounts ca ON ca.id = sp.cash_account_id WHERE sp.id = ${id}`;
   if (!p) throw notFound();
-  const allocations = await tx`SELECT po.doc_no AS "purchaseNo", a.amount::text AS amount FROM supplier_payment_allocations a JOIN purchase_orders po ON po.id = a.purchase_id WHERE a.payment_id = ${id}`;
+  // Per purchase invoice: its value, what this payment pays, what has been paid up to and including this payment, and what is STILL owed after it.
+  const rows = await tx`SELECT po.doc_no AS "purchaseNo", po.total::text AS "invoiceTotal", a.amount::text AS amount,
+      (COALESCE((SELECT sum(a2.amount) FROM supplier_payment_allocations a2 JOIN supplier_payments s2 ON s2.id = a2.payment_id
+                 WHERE a2.purchase_id = po.id AND s2.status = 'POSTED' AND s2.id <> ${id}
+                   AND s2.posted_at <= COALESCE((SELECT posted_at FROM supplier_payments WHERE id = ${id}), 'infinity'::timestamptz)), 0) + a.amount)::text AS "paidToDate",
+      COALESCE((SELECT sum(r.total_orig) FROM purchase_returns r WHERE r.purchase_id = po.id AND r.status = 'POSTED' AND r.settlement = 'REDUCE_PAYABLE'), 0)::text AS returned
+    FROM supplier_payment_allocations a JOIN purchase_orders po ON po.id = a.purchase_id WHERE a.payment_id = ${id} ORDER BY po.doc_date, po.doc_no`;
+  const allocations = rows.map((x) => { const rem = Decimal.max(d(x.invoiceTotal as string).minus(x.paidToDate as string).minus(x.returned as string), 0);
+    return { purchaseNo: x.purchaseNo as string, invoiceTotal: x.invoiceTotal as string, amount: x.amount as string, paidToDate: x.paidToDate as string, returned: x.returned as string, remaining: rem.toString(), state: rem.lte(0) ? "PAID" : "PARTIAL" }; });
   return { ...p, allocations };
 }

@@ -63,7 +63,7 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   const tr = await post("/api/cash-transfers", { docDate: "2026-11-05", fromAccountId: cash.id, toAccountId: other.id, amount: "100000", notes: "تسليم عهدة" }); await post(`/api/cash-transfers/${tr.id}/post`, {});
   const cap = await post("/api/capital-returns", { returnedAt: "2026-11-05T10:30:00.000Z", currency: "IQD", amount: "750000", recipientName: "صاحب المال", refNo: "R-9", method: "CASH" });
   const dels = await (await ctx.request.get(B + "/api/delivery-notes")).json(); const del = dels.find((x) => x.status === "POSTED");
-  const docs = [["quote", `/print/sales-quote/${quote.id}`, ["مروان المرعي"]], ["purchase", `/print/purchase/${buy.id}`, ["مورد قطع الغيار"]], ["payment", `/print/supplier-payment/${pay.id}`, ["مورد قطع الغيار", "300"]],
+  const docs = [["quote", `/print/sales-quote/${quote.id}`, ["مروان المرعي"]], ["purchase", `/print/purchase/${buy.id}`, ["مورد قطع الغيار"]], ["payment", `/print/supplier-payment/${pay.id}`, ["مورد قطع الغيار", "300", "5,000,000", "4,695,000"]],
     ["transfer", `/print/cash-transfer/${tr.id}`, ["تسليم عهدة"]], ["capital-return", `/print/capital-return/${cap.id}`, ["صاحب المال", "R-9"]],
     ["statement", `/print/statement/customer/${cust.id}`, ["مروان المرعي"]], ["trial-balance", `/print/report/trial-balance`, ["1300"]], ["analytics", `/print/analytics?type=sales&group=party`, []]];
   // documents without their own screen-detail API: returns, expense, stock transfer, capital request
