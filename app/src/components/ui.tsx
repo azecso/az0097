@@ -32,3 +32,8 @@ export function ReverseBox({ busy, onReverse, label = "عكس" }: { busy?: boole
   return (<><input aria-label="سبب العكس" placeholder="سبب العكس" style={{ maxWidth: 160 }} value={reason} onChange={(e) => setReason(e.target.value)} />
     <button className="danger" disabled={busy || reason.trim().length < 3} onClick={() => { void Promise.resolve(onReverse(reason.trim())).then(() => setReason("")); }}>{label}</button></>);
 }
+
+/** Opens the official PDF-ready print page of a document in a new tab. */
+export function PrintLink({ path, label = "طباعة" }: { path: string; label?: string }) {
+  return <a href={path} target="_blank" rel="noreferrer"><button type="button">{label}</button></a>;
+}

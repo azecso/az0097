@@ -4,7 +4,7 @@ import Decimal from "decimal.js";
 import Link from "next/link";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
-import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
+import { MsgBox, StatusBadge, useAction, useLoad, PrintLink } from "@/components/ui";
 
 interface T { id: string; draftRef: string; docNo: string | null; docDate: string; kind: string; currency: string; amount: string; reason: string; status: string; requestedBy: string; approvedBy: string | null; rejectedReason: string | null }
 interface Adv { id: string; draftRef: string; docNo: string | null; docDate: string; partnerName: string; partnerKind: string; kind: string; currency: string; amount: string; note: string | null; status: string }
@@ -34,7 +34,7 @@ export default function Capital() {
     <div className="card cards-as-list" style={{ marginTop: 12 }}><table><thead><tr><th>الرقم</th><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>السبب</th><th>الطالب</th><th>الحالة</th><th></th></tr></thead>
       <tbody>{cap.data.transactions.map((t) => <tr key={t.id}><td><span className="num">{t.docNo ?? t.draftRef}</span></td><td><span className="num">{t.docDate}</span></td><td>{t.kind === "INJECTION" ? "إيداع" : "سحب"}</td><td><span className="num">{money(t.amount)} {t.currency}</span></td><td>{t.reason}</td><td>{t.requestedBy}</td>
         <td>{t.status === "REQUESTED" ? <span className="badge">بانتظار اعتماد المالك</span> : t.status === "REJECTED" ? <span className="badge">مرفوض: {t.rejectedReason}</span> : <StatusBadge s={t.status} />}</td>
-        <td>{t.status === "REQUESTED" && me.user.isOwner && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/capital/${t.id}/approve`, { method: "POST", body: { totp: totp || null } }), "اعتُمد وتم الترحيل")}>اعتماد</button>}
+        <td><PrintLink path={`/print/doc/capital/${t.id}`} />{t.status === "REQUESTED" && me.user.isOwner && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/capital/${t.id}/approve`, { method: "POST", body: { totp: totp || null } }), "اعتُمد وتم الترحيل")}>اعتماد</button>}
           {t.status === "REQUESTED" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/capital/${t.id}/reject`, { method: "POST", body: { reason: reason || "مرفوض" } }), "رُفض الطلب")}>{me.user.isOwner ? "رفض" : "سحب الطلب"}</button>}</td></tr>)}
         {cap.data.transactions.length === 0 && <tr><td colSpan={8}>لا توجد حركات</td></tr>}</tbody></table></div>
     {t_hint(reason, setReason)}

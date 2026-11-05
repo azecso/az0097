@@ -192,3 +192,19 @@ describe("company contact details and invoice print data", () => {
     const g = await w.getInvoice(inv.id); expect(g).toMatchObject({ customerPhones: ["0770123"], customerAddress: "الرمادي", appliedToReceivable: "0" });
   });
 });
+
+describe("receipt print data: per-invoice remaining after the receipt", () => {
+  it("two receipts on one invoice: first shows partly paid with the remainder, second shows fully paid", async () => {
+    const c6 = (await w.api(w.owner, w.R.contacts.POST, { method: "POST", body: { kind: "CUSTOMER", code: "C-RC6", name: "عميل السند", paymentTermsDays: 0 } })).body.id;
+    const P = await w.mkProduct("RP12"); await w.buy({ product: P, qty: "20", price: "1000", date: "2026-09-10" });
+    const inv = await w.sale({ product: P, qty: "10", price: "10000", date: "2026-09-11", type: "CREDIT", customer: c6 });      // 100,000
+    const mk = async (amount: string, date: string) => { const r = await w.api(w.owner, w.R.receipts.POST, { method: "POST", body: { customerId: c6, docDate: date, cashAccountId: w.ids.cashIQD, currency: "IQD", amount, allocations: [{ invoiceId: inv.id, amount }] } }); await w.api(w.owner, w.R.receiptPost, { method: "POST", params: { id: r.body.id } }); return r.body.id as string; };
+    const r1 = await mk("40000", "2026-09-12"); await new Promise((r) => setTimeout(r, 15)); const r2 = await mk("60000", "2026-09-13");
+    const get1 = (await w.api(w.owner, w.R.receiptId.GET, { params: { id: r1 } })).body.allocations[0];
+    expect(get1).toMatchObject({ invoiceNet: "100000.0000", amount: "40000.0000", paidToDate: "40000.0000", remaining: "60000", state: "PARTIAL" });
+    const get2 = (await w.api(w.owner, w.R.receiptId.GET, { params: { id: r2 } })).body.allocations[0];
+    expect(get2).toMatchObject({ paidToDate: "100000.0000", remaining: "0", state: "PAID" });
+    // printing the first receipt again later still shows the balance as it was right after THAT receipt
+    expect((await w.api(w.owner, w.R.receiptId.GET, { params: { id: r1 } })).body.allocations[0].remaining).toBe("60000");
+  });
+});

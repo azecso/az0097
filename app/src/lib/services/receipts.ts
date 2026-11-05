@@ -199,7 +199,15 @@ export async function getReceipt(tx: Tx, id: string) {
   const [r] = await tx`SELECT r.id, r.doc_no AS "docNo", r.draft_ref AS "draftRef", r.doc_date::text AS "docDate", r.kind, c.name AS "customerName", c.phones AS "customerPhones", c.address AS "customerAddress", ca.name AS "cashAccount", r.currency, r.exchange_rate_snapshot::text AS "exchangeRate",
       r.amount::text AS amount, r.notes, r.status FROM customer_receipts r JOIN contacts c ON c.id = r.customer_id LEFT JOIN cash_accounts ca ON ca.id = r.cash_account_id WHERE r.id = ${id}`;
   if (!r) throw notFound();
-  const allocations = await tx`SELECT si.doc_no AS "invoiceNo", a.amount::text AS amount FROM receipt_allocations a JOIN sales_invoices si ON si.id = a.invoice_id WHERE a.receipt_id = ${id}`;
+  // Per invoice: its value, what this receipt pays, what has been paid up to and including this receipt, and what is STILL owed after it (returns applied to the receivable are deducted).
+  const rows = await tx`SELECT si.doc_no AS "invoiceNo", si.net::text AS "invoiceNet", a.amount::text AS amount,
+      (COALESCE((SELECT sum(a2.amount) FROM receipt_allocations a2 JOIN customer_receipts c2 ON c2.id = a2.receipt_id
+                 WHERE a2.invoice_id = si.id AND c2.status = 'POSTED' AND c2.id <> ${id}
+                   AND c2.posted_at <= COALESCE((SELECT posted_at FROM customer_receipts WHERE id = ${id}), 'infinity'::timestamptz)), 0) + a.amount)::text AS "paidToDate",
+      COALESCE((SELECT sum(applied_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0)::text AS returned
+    FROM receipt_allocations a JOIN sales_invoices si ON si.id = a.invoice_id WHERE a.receipt_id = ${id} ORDER BY si.doc_date, si.doc_no`;
+  const allocations = rows.map((x) => { const rem = Decimal.max(d(x.invoiceNet as string).minus(x.paidToDate as string).minus(x.returned as string), 0);
+    return { invoiceNo: x.invoiceNo as string, invoiceNet: x.invoiceNet as string, amount: x.amount as string, paidToDate: x.paidToDate as string, returned: x.returned as string, remaining: rem.toString(), state: rem.lte(0) ? "PAID" : "PARTIAL" }; });
   return { ...r, allocations };
 }
 export async function getCashTransfer(tx: Tx, id: string) {

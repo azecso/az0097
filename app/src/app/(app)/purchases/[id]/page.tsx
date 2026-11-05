@@ -49,7 +49,7 @@ export default function PurchaseView() {
       <button disabled={busy} onClick={async () => {
         const lines = d.lines.filter((l) => ret[l.id]).map((l) => ({ purchaseLineId: l.id, qtyBase: ret[l.id], exceptionalReason: exc || null }));
         const r = await run(() => api<{ id: string }>("/api/purchase-returns", { method: "POST", body: { purchaseId: id, docDate: today(), settlement: d.paymentType === "CASH" ? "CASH_REFUND" : "REDUCE_PAYABLE", cashAccountId: d.paymentType === "CASH" ? d.cashAccountId : null, reason, lines } }), "حُفظ المرتجع كمسودة");
-        if (r) await run(() => api(`/api/purchase-returns/${r.id}/post`, { method: "POST" }), "تم ترحيل المرتجع");
+        if (r) { const ok2 = await run(() => api(`/api/purchase-returns/${r.id}/post`, { method: "POST" }), "تم ترحيل المرتجع — فُتح مستند الطباعة"); if (ok2 !== undefined) window.open(`/print/doc/purchase-return/${r.id}`, "_blank"); }
       }}>إنشاء وترحيل المرتجع</button>{d.paymentType === "CASH" && <p className="badge">المرتجع النقدي يُردّ إلى نفس صندوق الفاتورة</p>}</div>}
   </>);
 }

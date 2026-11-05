@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { api, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
-import { MsgBox, StatusBadge, useAction, useLoad , ReverseBox } from "@/components/ui";
+import { MsgBox, StatusBadge, useAction, useLoad , ReverseBox, PrintLink } from "@/components/ui";
 
 interface T { id: string; draftRef: string; docNo: string | null; docDate: string; from: string; to: string; status: string }
 interface Prod { id: string; code: string; name: string; baseUom: string; uoms: { uom: string }[] } interface Loc { id: string; name: string }
@@ -30,7 +30,7 @@ export default function Transfers() {
     <MsgBox msg={msg} />
     <div className="card cards-as-list" style={{ marginTop: 12 }}><table><thead><tr><th>الرقم</th><th>التاريخ</th><th>من</th><th>إلى</th><th>الحالة</th><th></th></tr></thead>
       <tbody>{list.data.map((t) => <tr key={t.id}><td><span className="num">{t.docNo ?? t.draftRef}</span></td><td><span className="num">{t.docDate}</span></td><td>{t.from}</td><td>{t.to}</td><td><StatusBadge s={t.status} /></td>
-        <td>{t.status === "DRAFT" && can(me, "stock_transfer:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/stock-transfers/${t.id}/post`, { method: "POST" }), "تم ترحيل التحويل")}>ترحيل</button>}
+        <td><PrintLink path={`/print/doc/stock-transfer/${t.id}`} />{t.status === "DRAFT" && can(me, "stock_transfer:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/stock-transfers/${t.id}/post`, { method: "POST" }), "تم ترحيل التحويل")}>ترحيل</button>}
           {t.status === "DRAFT" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/stock-transfers/${t.id}`, { method: "DELETE" }), "حُذفت المسودة")}>حذف</button>}
           {t.status === "POSTED" && can(me, "stock_transfer:cancel") && <ReverseBox busy={busy} onReverse={(reason) => run(() => api(`/api/stock-transfers/${t.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
         {list.data.length === 0 && <tr><td colSpan={6}>لا توجد تحويلات</td></tr>}</tbody></table></div></>);

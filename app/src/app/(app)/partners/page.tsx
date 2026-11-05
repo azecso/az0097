@@ -3,7 +3,7 @@ import { useState } from "react";
 import Decimal from "decimal.js";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
-import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
+import { MsgBox, StatusBadge, useAction, useLoad, PrintLink } from "@/components/ui";
 
 interface Ov { partners: { id: string; name: string; kind: string; dueProfit: string; payableToPartner: string; advancesOutstanding: string; capital: string; ownerDrawings: string; netDue: string }[]; liquidity: { cash: string; committed: string; available: string }; lossCarriedForward: string }
 interface Pv { eligibleProfit: string; deductions: string; adjustments: string; lossCarriedIn: string; reserved: string; periodResult: string; lossCovered: string; lossCarriedOut: string; distributable: string; ownerShare: string; partnerShare: string; lines: { docNo: string; adjustedProfit: string; ratio: string; linked: string; before: string; newly: string }[] }
@@ -52,7 +52,7 @@ export default function Partners() {
             {x.kind === "PARTNER" && <input aria-label="سلف تُخصم" placeholder="سلف تُخصم" style={{ maxWidth: 100 }} dir="ltr" value={adv[s.id] ?? ""} onChange={(e) => setAdv({ ...adv, [s.id]: e.target.value })} />}
             <button disabled={busy || !pay[s.id + x.kind] || !cashId} onClick={() => run(() => api("/api/profit-payouts", { method: "POST", body: { settlementId: s.id, partnerKind: x.kind, amount: pay[s.id + x.kind], deductAdvances: x.kind === "PARTNER" ? adv[s.id] || "0" : "0", cashAccountId: cashId, docDate: today(), idempotencyKey: key(), totp: totp || null } }), "تم تسجيل الدفعة")}>دفع</button></span>}</div>)}</td>
         <td><StatusBadge s={s.status} /></td>
-        <td>{s.status === "DRAFT" && me.user.isOwner && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/profit-settlements/${s.id}/approve`, { method: "POST", body: { totp: totp || null } }), "اعتُمدت التسوية")}>اعتماد</button>}
+        <td><PrintLink path={`/print/doc/settlement/${s.id}`} />{s.status === "DRAFT" && me.user.isOwner && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/profit-settlements/${s.id}/approve`, { method: "POST", body: { totp: totp || null } }), "اعتُمدت التسوية")}>اعتماد</button>}
           {s.status === "DRAFT" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/profit-settlements/${s.id}`, { method: "DELETE" }), "حُذفت")}>حذف</button>}
           {s.status === "POSTED" && me.user.isOwner && <button className="danger" disabled={busy || reason.length < 3} onClick={() => run(() => api(`/api/profit-settlements/${s.id}/reverse`, { method: "POST", body: { reason, totp: totp || null } }), "عُكست التسوية")}>عكس</button>}</td></tr>)}
         {sets.data.length === 0 && <tr><td colSpan={6}>لا توجد تسويات</td></tr>}</tbody></table>

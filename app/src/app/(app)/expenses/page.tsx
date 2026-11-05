@@ -4,7 +4,7 @@ import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { createDraft, useRefList } from "@/lib/offline/use";
 import { PickOrCreate } from "@/components/pick";
-import { MsgBox, StatusBadge, useAction, useLoad , ReverseBox } from "@/components/ui";
+import { MsgBox, StatusBadge, useAction, useLoad , ReverseBox, PrintLink } from "@/components/ui";
 
 interface E { id: string; draftRef: string; docNo: string | null; docDate: string; category: string; description: string; currency: string; amount: string; paymentMode: string; partnerTreatment: string | null; status: string; outstanding: string }
 interface Cat { id: string; name: string } interface Cash { id: string; name: string; currency: string; kind: string }
@@ -40,7 +40,7 @@ export default function Expenses() {
     <div className="card cards-as-list" style={{ marginTop: 12 }}><table><thead><tr><th>الرقم</th><th>التاريخ</th><th>التصنيف</th><th>البيان</th><th>المبلغ</th><th>الدفع</th><th>المستحق</th><th>الحالة</th><th></th></tr></thead>
       <tbody>{list.data.map((x) => <tr key={x.id}><td><span className="num">{x.docNo ?? x.draftRef}</span></td><td><span className="num">{x.docDate}</span></td><td>{x.category}</td><td>{x.description}</td><td><span className="num">{money(x.amount)} {x.currency}</span></td>
         <td>{MODE[x.paymentMode]}{x.partnerTreatment === "OFFSET_AGAINST_ADVANCES" ? " (تسوية)" : ""}</td><td><span className="num">{money(x.outstanding)}</span></td><td><StatusBadge s={x.status} /></td>
-        <td>{x.status === "DRAFT" && can(me, "expense:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/expenses/${x.id}/post`, { method: "POST" }), "تم الترحيل")}>ترحيل</button>}
+        <td><PrintLink path={`/print/doc/expense/${x.id}`} />{x.status === "DRAFT" && can(me, "expense:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/expenses/${x.id}/post`, { method: "POST" }), "تم الترحيل")}>ترحيل</button>}
           {x.status === "DRAFT" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/expenses/${x.id}`, { method: "DELETE" }), "حُذفت المسودة")}>حذف</button>}
           {x.status === "POSTED" && Number(x.outstanding) > 0 && can(me, "expense:approve") && <><input aria-label="مبلغ السداد" placeholder="مبلغ السداد" style={{ maxWidth: 120 }} dir="ltr" value={pay[x.id] ?? ""} onChange={(e) => setPay({ ...pay, [x.id]: e.target.value })} />
             <button disabled={busy || !pay[x.id]} onClick={() => run(() => api("/api/expense-payments", { method: "POST", body: { expenseId: x.id, docDate: today(), cashAccountId: mainCash.find((c) => c.currency === x.currency)?.id, amount: pay[x.id] } }), "تم السداد")}>سداد</button></>}

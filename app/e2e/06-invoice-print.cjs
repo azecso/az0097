@@ -20,16 +20,16 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
     const lines = Array.from({ length: n }, (_, i) => ({ productId: prod.id, uom: "قطعة", qty: String(2 + (i % 5)), unitPrice: String(1500 + i * 250), lineDiscount: "0" }));
     const inv = await post("/api/sales-invoices", { customerId: cust.id, docDate: "2026-11-05", saleType: "CREDIT", dueDate: "2026-12-05", currency: "IQD", deliveryMode: "WITH_INVOICE", discount: n === 20 ? "5000" : "0", lines });
     await post(`/api/sales-invoices/${inv.id}/post`, {});
-    if (pay) { const g = await (await ctx.request.get(B + `/api/sales-invoices/${inv.id}`)).json(); const rc = await post("/api/customer-receipts", { customerId: cust.id, docDate: "2026-11-05", cashAccountId: cash.id, currency: "IQD", amount: pay, allocations: [{ invoiceId: inv.id, amount: pay }] }); await post(`/api/customer-receipts/${rc.id}/post`, {}); return { id: inv.id, net: g.net }; }
+    if (pay) { const g = await (await ctx.request.get(B + `/api/sales-invoices/${inv.id}`)).json(); const rc = await post("/api/customer-receipts", { customerId: cust.id, docDate: "2026-11-05", cashAccountId: cash.id, currency: "IQD", amount: pay, allocations: [{ invoiceId: inv.id, amount: pay }] }); await post(`/api/customer-receipts/${rc.id}/post`, {}); return { id: inv.id, net: g.net, rc: rc.id }; }
     return { id: inv.id };
   };
-  fs.mkdirSync("inv", { recursive: true });
+  fs.mkdirSync("inv", { recursive: true }); let partial = null;
   const pdfOf = async (id, name) => { const r = await ctx.request.get(B + `/api/pdf?path=${encodeURIComponent("/print/sales-invoice/" + id)}`); const buf = await r.body(); fs.writeFileSync(`inv/${name}.pdf`, buf); return buf; };
   const pages = (buf) => (buf.toString("latin1").match(/\/Type\s*\/Page(?![s\w])/g) || []).length;
   const txt = (name, n) => execFileSync("pdftotext", ["-f", String(n), "-l", String(n), `inv/${name}.pdf`, "-"], { encoding: "utf8" });
   const results = {};
   for (const [n, pay] of [[1, null], [20, "100000"], [50, "250000"]]) {
-    const inv = await make(n, pay); const buf = await pdfOf(inv.id, `invoice-${n}`); const pc = pages(buf); results[n] = pc;
+    const inv = await make(n, pay); if (n === 20) partial = inv; const buf = await pdfOf(inv.id, `invoice-${n}`); const pc = pages(buf); results[n] = pc;
     const last = txt(`invoice-${n}`, pc); const first = txt(`invoice-${n}`, 1);
     ok(`${n} lines: a real A4 PDF with ${pc} page(s)`, buf.slice(0, 5).toString() === "%PDF-" && pc >= 1 && (n === 1 ? pc === 1 : true));
     ok(`${n} lines: summary (net / paid / remaining) is on the last page`, /المتبقي/.test(last) && /المدفوع/.test(last));
@@ -43,6 +43,11 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   // signature + stamp are images placed automatically on the last page (logo, watermark, signature, stamp)
   const imgs = (name, n) => execFileSync("pdfimages", ["-list", "-f", String(n), "-l", String(n), `inv/${name}.pdf`], { encoding: "utf8" }).split("\n").filter((l) => /^\s*\d+\s+\d+\s+image/.test(l)).length;
   ok("invoice: logo, watermark, accountant signature and company stamp are all embedded on the last page", imgs("invoice-1", 1) >= 4);
+  // receipt of a partly paid invoice: shows the invoice value, what was paid and what is still owed ("مسدد جزئي")
+  const pr = await ctx.request.get(B + `/api/pdf?path=${encodeURIComponent("/print/receipt/" + partial.rc)}`); const pbuf = await pr.body(); fs.writeFileSync("inv/receipt-partial.pdf", pbuf);
+  const ptxt = execFileSync("pdftotext", ["inv/receipt-partial.pdf", "-"], { encoding: "utf8" });
+  ok("receipt of a partly paid invoice shows invoice value 315,000, paid 100,000 and the 215,000 still owed", ["315,000", "100,000", "215,000"].every((n) => ptxt.includes(n)));
+  execFileSync("pdftoppm", ["-r", "70", "-png", "inv/receipt-partial.pdf", "inv/receipt-partial"]);
   // receipt voucher: same official design
   const rcAmt = "1500000"; const rc2 = await post("/api/customer-receipts", { customerId: cust.id, docDate: "2026-11-05", cashAccountId: cash.id, currency: "IQD", amount: "2000000", allocations: [] });
   await post(`/api/customer-receipts/${rc2.id}/post`, {});
@@ -61,6 +66,18 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   const docs = [["quote", `/print/sales-quote/${quote.id}`, ["مروان المرعي"]], ["purchase", `/print/purchase/${buy.id}`, ["مورد قطع الغيار"]], ["payment", `/print/supplier-payment/${pay.id}`, ["مورد قطع الغيار", "300"]],
     ["transfer", `/print/cash-transfer/${tr.id}`, ["تسليم عهدة"]], ["capital-return", `/print/capital-return/${cap.id}`, ["صاحب المال", "R-9"]],
     ["statement", `/print/statement/customer/${cust.id}`, ["مروان المرعي"]], ["trial-balance", `/print/report/trial-balance`, ["1300"]], ["analytics", `/print/analytics?type=sales&group=party`, []]];
+  // documents without their own screen-detail API: returns, expense, stock transfer, capital request
+  const sinv = await make(2, null); const sg = await (await ctx.request.get(B + `/api/sales-invoices/${sinv.id}`)).json();
+  const sret = await post("/api/sales-returns", { invoiceId: sinv.id, docDate: "2026-11-05", reason: "تلف عند التسليم", settlement: "REDUCE_RECEIVABLE", lines: [{ salesLineId: sg.lines[0].id, qtyBase: "1" }] }); await post(`/api/sales-returns/${sret.id}/post`, {});
+  const bg = await (await ctx.request.get(B + `/api/purchases/${buy.id}`)).json();
+  const pret = await post("/api/purchase-returns", { purchaseId: buy.id, docDate: "2026-11-05", settlement: "REDUCE_PAYABLE", reason: "بضاعة معيبة", lines: [{ purchaseLineId: bg.lines[0].id, qtyBase: "5" }] }); await post(`/api/purchase-returns/${pret.id}/post`, {});
+  const cats = await (await ctx.request.get(B + "/api/expense-categories")).json();
+  const exp = await post("/api/expenses", { docDate: "2026-11-05", categoryId: cats[0].id, description: "إيجار المكتب لشهر تشرين", currency: "IQD", amount: "250000", paymentMode: "ACCRUED" }); await post(`/api/expenses/${exp.id}/post`, {});
+  const locs = await (await ctx.request.get(B + "/api/locations")).json();
+  const trf = await post("/api/stock-transfers", { docDate: "2026-11-05", fromLocationId: locs[0].id, toLocationId: locs[1].id, notes: "نقل لعهدة الشريك", lines: [{ productId: prod.id, uom: "قطعة", qty: "10" }] }); await post(`/api/stock-transfers/${trf.id}/post`, {});
+  const capq = await post("/api/capital", { kind: "INJECTION", docDate: "2026-11-05", cashAccountId: cash.id, currency: "IQD", amount: "5000000", reason: "زيادة رأس مال للتوسع" });
+  docs.push(["sales-return", `/print/doc/sales-return/${sret.id}`, ["تلف عند التسليم", "مروان المرعي"]], ["purchase-return", `/print/doc/purchase-return/${pret.id}`, ["بضاعة معيبة", "مورد قطع الغيار"]], ["expense", `/print/doc/expense/${exp.id}`, ["250,000"]],
+    ["stock-transfer", `/print/doc/stock-transfer/${trf.id}`, ["HYD-001"]], ["capital", `/print/doc/capital/${capq.id}`, ["5,000,000", "زيادة رأس مال للتوسع"]]);
   if (del) docs.push(["delivery", `/print/delivery/${del.id}`, ["مروان المرعي"]]);
   for (const [name, path, must] of docs) {
     const r = await ctx.request.get(B + `/api/pdf?path=${encodeURIComponent(path)}`); const buf = await r.body(); fs.writeFileSync(`inv/doc-${name}.pdf`, buf);
