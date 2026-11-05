@@ -1,0 +1,52 @@
+/* Official A4 sales invoice. Everything is scoped to .inv. Colours: navy #12233d, gold #b8892b, greys. */
+.inv { --navy: #12233d; --gold: #b8892b; --line: #cfd4dc; --soft: #f4f6f9; width: 210mm; min-height: 297mm; margin: 0 auto; padding: 12mm 12mm 30mm; background: #fff; color: #1b2330; font-size: 12.5px; line-height: 1.55; position: relative; direction: rtl; page: inv; }
+.inv * { box-sizing: border-box; }
+.inv .num { direction: ltr; unicode-bidi: isolate; font-variant-numeric: tabular-nums; }
+.inv .en { direction: ltr; unicode-bidi: isolate; }
+
+.inv .wm { position: fixed; inset: 0; z-index: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; pointer-events: none; opacity: .07; }
+.inv .wm img { width: 120mm; height: 120mm; object-fit: contain; }
+.inv .wm b { font-size: 30px; color: var(--navy); margin-top: 6mm; } .inv .wm i { font-size: 19px; font-style: normal; color: var(--navy); direction: ltr; letter-spacing: .5px; }
+.inv .content { position: relative; z-index: 1; }
+
+.inv .head { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding-bottom: 8px; border-bottom: 3px solid var(--navy); position: relative; }
+.inv .head::after { content: ""; position: absolute; inset-inline: 0; bottom: -7px; height: 2px; background: var(--gold); }
+.inv .brand { display: flex; align-items: center; gap: 12px; }
+.inv .brand img { width: 26mm; height: 26mm; object-fit: contain; }
+.inv .brand .ar { font-size: 22px; font-weight: 800; color: var(--navy); line-height: 1.25; } .inv .brand .enm { font-size: 12px; font-weight: 700; color: #4a5568; letter-spacing: .4px; }
+.inv .title { text-align: center; background: var(--navy); color: #fff; padding: 8px 18px; border-radius: 6px; min-width: 58mm; }
+.inv .title b { display: block; font-size: 20px; line-height: 1.2; } .inv .title small { display: block; font-size: 11px; letter-spacing: 1.5px; color: #e7d29a; direction: ltr; }
+.inv .stampbar { text-align: center; color: #b00020; font-weight: 800; letter-spacing: 1px; margin-top: 12px; }
+
+.inv .boxes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+.inv .box { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.inv .box h3 { margin: 0; background: var(--soft); color: var(--navy); font-size: 12px; padding: 4px 10px; border-bottom: 1px solid var(--line); }
+.inv .box dl { margin: 0; padding: 6px 10px; display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; }
+.inv .box dt { color: #5a6577; } .inv .box dd { margin: 0; font-weight: 600; }
+
+.inv table.items { width: 100%; border-collapse: collapse; margin-top: 12px; }
+.inv table.items thead { display: table-header-group; }
+.inv table.items th { background: var(--navy); color: #fff; font-weight: 700; padding: 6px 7px; border: 1px solid var(--navy); font-size: 12px; text-align: center; }
+.inv table.items td { padding: 5px 7px; border: 1px solid var(--line); vertical-align: top; }
+.inv table.items tbody tr { break-inside: avoid; page-break-inside: avoid; } .inv table.items tbody tr:nth-child(even) td { background: rgba(244, 246, 249, .75); }
+.inv table.items td.c { text-align: center; } .inv table.items td.e { text-align: end; }
+.inv table.items .code { color: #6b7686; font-size: 11px; }
+
+.inv .final { break-inside: avoid; page-break-inside: avoid; margin-top: 12px; }
+.inv .sumrow { display: grid; grid-template-columns: 1fr 78mm; gap: 12px; align-items: start; }
+.inv .words { border: 1px solid var(--gold); background: #fffaf0; border-radius: 6px; padding: 8px 10px; font-weight: 700; color: var(--navy); } .inv .words small { display: block; color: #7a6a3a; font-weight: 600; margin-bottom: 2px; }
+.inv .notes { margin-top: 8px; font-size: 11.5px; color: #3a4556; }
+.inv table.sum { width: 100%; border-collapse: collapse; } .inv table.sum td { padding: 4px 8px; border-bottom: 1px solid var(--line); } .inv table.sum td:last-child { text-align: end; font-weight: 700; }
+.inv table.sum tr.net td { background: var(--navy); color: #fff; font-size: 13.5px; border-color: var(--navy); } .inv table.sum tr.due td { background: #fff4da; color: var(--navy); font-size: 13.5px; border: 1px solid var(--gold); }
+
+.inv .sign { display: grid; grid-template-columns: 1fr 44mm 1fr; gap: 14px; margin-top: 16px; align-items: end; text-align: center; }
+.inv .sign .who { border-top: 1.5px solid var(--navy); padding-top: 5px; margin-top: 20mm; display: flex; flex-direction: column; }
+.inv .sign .who span { color: #5a6577; font-size: 11px; } .inv .sign .who b { color: var(--navy); font-size: 13px; }
+.inv .sign .seal { height: 40mm; display: grid; place-items: center; } .inv .sign .seal img { max-width: 40mm; max-height: 40mm; object-fit: contain; }
+
+.inv .foot { position: fixed; inset-inline: 12mm; bottom: -23mm; z-index: 2; border-top: 2px solid var(--gold); padding-top: 4px; font-size: 10.5px; color: #3a4556; text-align: center; background: #fff; }
+.inv .foot b { color: var(--navy); } .inv .foot .row2 { display: flex; flex-wrap: wrap; gap: 4px 14px; justify-content: center; margin-top: 2px; }
+
+@page inv { size: A4 portrait; margin: 12mm 12mm 30mm 12mm; }
+@media print { .inv { width: auto; min-height: 0; padding: 0; margin: 0; } .inv .foot { display: none; } }   /* in the PDF the footer comes from <template id="pdf-footer"> */
+@media screen { .inv .foot { position: absolute; bottom: 8mm; inset-inline: 12mm; } .inv .wm { position: absolute; } .inv { box-shadow: 0 2px 14px rgba(0, 0, 0, .12); margin-block: 12px; } }

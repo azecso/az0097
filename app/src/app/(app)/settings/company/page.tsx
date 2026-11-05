@@ -4,7 +4,7 @@ import { api } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { Attach } from "@/components/attach";
 
-interface Co { name: string; nameEn: string | null; address: string | null; phones: string[] | null; baseCurrency: string; allowNegativeStock: boolean; landedCostPolicy: "EXCLUDE" | "INCLUDE"; version: number }
+interface Co { name: string; nameEn: string | null; address: string | null; phones: string[] | null; email: string | null; website: string | null; taxNo: string | null; baseCurrency: string; allowNegativeStock: boolean; landedCostPolicy: "EXCLUDE" | "INCLUDE"; version: number }
 export default function Company() {
   const me = useMe(); const [c, setC] = useState<Co | null>(null); const [msg, setMsg] = useState<{ t: "ok" | "err"; m: string } | null>(null);
   const load = () => api<Co>("/api/company").then(setC);
@@ -15,7 +15,7 @@ export default function Company() {
     e.preventDefault(); const f = new FormData(e.currentTarget); setMsg(null);
     try {
       await api("/api/company", { method: "PATCH", body: { name: String(f.get("name")), nameEn: String(f.get("nameEn") ?? "") || null, address: String(f.get("address") ?? "") || null,
-        phones: String(f.get("phones") ?? "").split(/[,،\s]+/).filter(Boolean), allowNegativeStock: f.get("neg") === "on", landedCostPolicy: String(f.get("lc")), version: c!.version } });
+        phones: String(f.get("phones") ?? "").split(/[,،\s]+/).filter(Boolean), email: String(f.get("email") ?? "") || null, website: String(f.get("website") ?? "") || null, taxNo: String(f.get("taxNo") ?? "") || null, allowNegativeStock: f.get("neg") === "on", landedCostPolicy: String(f.get("lc")), version: c!.version } });
       setMsg({ t: "ok", m: "تم الحفظ" }); await load();
     } catch (x) { setMsg({ t: "err", m: (x as Error).message }); }
   }
@@ -25,6 +25,9 @@ export default function Company() {
       <div><label htmlFor="n">الاسم</label><input id="n" name="name" defaultValue={c.name} required disabled={!editable} /></div>
       <div><label htmlFor="e">الاسم بالإنجليزية</label><input id="e" name="nameEn" defaultValue={c.nameEn ?? ""} dir="ltr" disabled={!editable} /></div>
       <div><label htmlFor="a">العنوان</label><input id="a" name="address" defaultValue={c.address ?? ""} disabled={!editable} /></div>
+      <div><label htmlFor="em">البريد الإلكتروني (يظهر في تذييل المستندات)</label><input id="em" name="email" type="email" defaultValue={c.email ?? ""} dir="ltr" disabled={!editable} /></div>
+      <div><label htmlFor="ws">الموقع الإلكتروني</label><input id="ws" name="website" defaultValue={c.website ?? ""} dir="ltr" disabled={!editable} /></div>
+      <div><label htmlFor="tx">الرقم الضريبي / رقم التسجيل</label><input id="tx" name="taxNo" defaultValue={c.taxNo ?? ""} dir="ltr" disabled={!editable} /></div>
       <div><label htmlFor="p">الهواتف (مفصولة بفاصلة)</label><input id="p" name="phones" defaultValue={(c.phones ?? []).join(", ")} dir="ltr" disabled={!editable} /></div>
       <div><label>عملة الأساس</label><input value={c.baseCurrency} disabled dir="ltr" /></div>
       <div><label htmlFor="lc">السياسة الافتراضية للنقل والتكاليف الإضافية (يمكن تغييرها لكل بند في فاتورة الشراء)</label><select id="lc" name="lc" defaultValue={c.landedCostPolicy} disabled={!editable}>

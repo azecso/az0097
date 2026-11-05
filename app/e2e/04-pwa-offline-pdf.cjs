@@ -85,7 +85,7 @@ const B = BASE, PIN = "482913";
 
   // ---- A4 PDF (server-side Chromium) and print page
   const inv = (await call(A.p, "GET", "/api/sales-invoices")).find((x) => x.docNo);
-  await A.p.goto(B + "/print/sales-invoice/" + inv.id); await wait(A.p, ".sheet[data-ready='1']"); const txt = await A.p.textContent(".sheet");
+  await A.p.goto(B + "/print/sales-invoice/" + inv.id); await wait(A.p, "[data-ready='1']"); const txt = await A.p.textContent(".inv, .sheet");
   ok("print sheet: company header, number, customer and amount in words", txt.includes("شركة التجربة") && txt.includes(inv.docNo) && txt.includes("عميل سري الاسم") && txt.includes("فقط"));
   await A.p.screenshot({ path: "invoice-print.png", fullPage: true });
   const pdfRes = await A.p.request.get(B + "/api/pdf?path=" + encodeURIComponent("/print/sales-invoice/" + inv.id));

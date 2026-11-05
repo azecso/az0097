@@ -22,7 +22,9 @@ export function renderPdf(origin: string, path: string, sessionCookie: string): 
       await page.goto(origin + path, { waitUntil: "networkidle", timeout: 30_000 });
       await page.waitForSelector('[data-ready="1"]', { timeout: 20_000 });
       await page.emulateMedia({ media: "print" });
-      return Buffer.from(await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true, displayHeaderFooter: false }));
+      // A page may ship its own repeating footer (company data + page numbers) as <template id="pdf-footer">: Chromium prints it in the bottom margin of EVERY page.
+      const footer = await page.evaluate(() => document.querySelector("template#pdf-footer")?.innerHTML ?? null);
+      return Buffer.from(await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true, displayHeaderFooter: !!footer, headerTemplate: "<span></span>", footerTemplate: footer ?? "<span></span>" }));
     } finally { await browser.close(); }
   };
   const p = chain.then(run, run); chain = p.catch(() => undefined); return p;

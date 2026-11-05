@@ -5,7 +5,7 @@ import type { Principal } from "../authz";
 import { badRequest, conflict, notFound } from "../errors";
 
 export async function getCompany(tx: Tx) {
-  const [c] = await tx`SELECT id, name, name_en AS "nameEn", address, phones, base_currency AS "baseCurrency",
+  const [c] = await tx`SELECT id, name, name_en AS "nameEn", address, phones, email, website, tax_no AS "taxNo", base_currency AS "baseCurrency",
       allow_negative_stock AS "allowNegativeStock", landed_cost_policy AS "landedCostPolicy", logo_attachment_id AS "logoAttachmentId", signature_attachment_id AS "signatureAttachmentId", version FROM companies`;
   if (!c) throw notFound();
   return c;
@@ -13,6 +13,7 @@ export async function getCompany(tx: Tx) {
 export const companySchema = z.object({
   name: z.string().min(2).max(200), nameEn: z.string().max(200).nullish(), address: z.string().max(500).nullish(),
   phones: z.array(z.string().max(32)).max(5).default([]),
+  email: z.string().trim().max(120).email().nullish().or(z.literal("")), website: z.string().trim().max(200).nullish(), taxNo: z.string().trim().max(60).nullish(),
   allowNegativeStock: z.boolean().default(false),
   landedCostPolicy: z.enum(["EXCLUDE", "INCLUDE"]).default("EXCLUDE"),
   version: z.number().int(),
@@ -22,7 +23,7 @@ export async function updateCompany(tx: Tx, who: Principal, actor: Actor, i: z.i
   if (i.allowNegativeStock) throw badRequest("NOT_IMPLEMENTED", "المخزون السالب غير مدعوم؛ النظام يمنع الرصيد السالب");
   const before = await getCompany(tx);
   if (before.version !== i.version) throw conflict("VERSION_CONFLICT", "تم تعديل بيانات الشركة من جهة أخرى");
-  await tx`UPDATE companies SET name=${i.name}, name_en=${i.nameEn ?? null}, address=${i.address ?? null}, phones=${i.phones},
+  await tx`UPDATE companies SET name=${i.name}, name_en=${i.nameEn ?? null}, address=${i.address ?? null}, phones=${i.phones}, email=${i.email || null}, website=${i.website || null}, tax_no=${i.taxNo || null},
       allow_negative_stock=${i.allowNegativeStock}, landed_cost_policy=${i.landedCostPolicy}, version=version+1, updated_at=now()
     WHERE id=${who.companyId}`;
   const after = await getCompany(tx);

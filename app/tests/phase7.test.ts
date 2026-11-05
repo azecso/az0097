@@ -178,3 +178,17 @@ describe("draft payroll accrual can be deleted (regression: was an internal erro
     const again = (await w.api(w.owner, w.R.payroll.GET, { path: "/api/payroll?month=2026-11" } as any)).body.filter((a: any) => a.id === acc.id); expect(again.length).toBe(0);
   });
 });
+
+describe("company contact details and invoice print data", () => {
+  it("stores email / website / tax number and the invoice returns the customer phone and address", async () => {
+    const co = (await w.api(w.owner, w.R.company.GET)).body;
+    const up = await w.api(w.owner, w.R.company.PATCH, { method: "PATCH", body: { name: co.name, nameEn: "AL SHAMS", address: "بغداد", phones: ["07700000000"], email: "info@example.com", website: "example.com", taxNo: "TX-1", landedCostPolicy: co.landedCostPolicy, allowNegativeStock: false, version: co.version } });
+    expect(up.status).toBe(200); expect(up.body).toMatchObject({ email: "info@example.com", website: "example.com", taxNo: "TX-1" });
+    const bad = await w.api(w.owner, w.R.company.PATCH, { method: "PATCH", body: { name: co.name, phones: [], email: "not-an-email", landedCostPolicy: co.landedCostPolicy, allowNegativeStock: false, version: up.body.version } });
+    expect(bad.status).toBe(400);
+    const c5 = (await w.api(w.owner, w.R.contacts.POST, { method: "POST", body: { kind: "CUSTOMER", code: "C-PH", name: "عميل الهاتف", phones: ["0770123"], address: "الرمادي", paymentTermsDays: 0 } })).body.id;
+    const P = await w.mkProduct("RP11"); await w.buy({ product: P, qty: "5", price: "1000", date: "2026-09-01" });
+    const inv = await w.sale({ product: P, qty: "1", price: "2000", date: "2026-09-02", type: "CREDIT", customer: c5 });
+    const g = await w.getInvoice(inv.id); expect(g).toMatchObject({ customerPhones: ["0770123"], customerAddress: "الرمادي", appliedToReceivable: "0" });
+  });
+});

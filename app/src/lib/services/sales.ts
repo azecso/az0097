@@ -130,7 +130,7 @@ export async function listInvoices(tx: Tx, status?: string) {
 }
 
 export async function getInvoice(tx: Tx, id: string) {
-  const [h] = await tx`SELECT si.id, si.draft_ref AS "draftRef", si.doc_no AS "docNo", si.doc_date::text AS "docDate", si.event_date::text AS "eventDate", si.customer_id AS "customerId", c.name AS "customerName",
+  const [h] = await tx`SELECT si.id, si.draft_ref AS "draftRef", si.doc_no AS "docNo", si.doc_date::text AS "docDate", si.event_date::text AS "eventDate", si.customer_id AS "customerId", c.name AS "customerName", c.phones AS "customerPhones", c.address AS "customerAddress",
       si.sale_type AS "saleType", si.cash_account_id AS "cashAccountId", si.due_date::text AS "dueDate", si.delivery_mode AS "deliveryMode", si.currency, si.exchange_rate_snapshot::text AS "exchangeRate",
       si.gross::text AS gross, si.discount::text AS discount, si.net::text AS net, si.net_base::text AS "netBase", si.terms, si.notes, si.status, si.version
     FROM sales_invoices si JOIN contacts c ON c.id = si.customer_id WHERE si.id = ${id}`;

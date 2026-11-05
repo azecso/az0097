@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { api, money } from "@/lib/client";
 
-interface Co { name: string; nameEn: string | null; address: string | null; phones: string[] | null; logoAttachmentId: string | null; signatureAttachmentId: string | null }
+export interface Co { name: string; nameEn: string | null; address: string | null; phones: string[] | null; email?: string | null; website?: string | null; taxNo?: string | null; logoAttachmentId: string | null; signatureAttachmentId: string | null }
 
 /** Loads a document + the company header, then sets data-ready so the PDF renderer knows the page is complete. */
 export function usePrint<T>(path: string) {
