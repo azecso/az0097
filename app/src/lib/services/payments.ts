@@ -111,7 +111,7 @@ export async function reversePayment(tx: Tx, who: Principal, actor: Actor, id: s
 void Decimal; void roundMoney;
 
 export async function getSupplierPayment(tx: Tx, id: string) {
-  const [p] = await tx`SELECT sp.id, sp.doc_no AS "docNo", sp.draft_ref AS "draftRef", sp.doc_date::text AS "docDate", c.name AS "supplierName", ca.name AS "cashAccount", sp.currency, sp.exchange_rate_snapshot::text AS "exchangeRate",
+  const [p] = await tx`SELECT sp.id, sp.doc_no AS "docNo", sp.draft_ref AS "draftRef", sp.doc_date::text AS "docDate", c.name AS "supplierName", c.phones AS "supplierPhones", c.address AS "supplierAddress", ca.name AS "cashAccount", sp.currency, sp.exchange_rate_snapshot::text AS "exchangeRate",
       sp.amount::text AS amount, sp.notes, sp.status FROM supplier_payments sp JOIN contacts c ON c.id = sp.supplier_id JOIN cash_accounts ca ON ca.id = sp.cash_account_id WHERE sp.id = ${id}`;
   if (!p) throw notFound();
   const allocations = await tx`SELECT po.doc_no AS "purchaseNo", a.amount::text AS amount FROM supplier_payment_allocations a JOIN purchase_orders po ON po.id = a.purchase_id WHERE a.payment_id = ${id}`;

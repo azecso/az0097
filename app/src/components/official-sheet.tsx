@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { api } from "@/lib/client";
 import { Loading, statusStamp, type Co } from "@/components/print";
 import "./official-sheet.css";
@@ -22,8 +22,14 @@ export function useWho() {
 }
 
 /** Shared official A4 layout: header with fixed logo, boxes, body, final block (words/summary + signatures + stamp), watermark, per-page footer. */
-export function OfficialSheet({ co, who, title, titleEn, pdfPath, status, boxes, children, final, rightLabel = "المحاسب", leftLabel, leftName }: {
-  co: Co | null; who: string | null; title: string; titleEn: string; pdfPath: string; status?: string; boxes: ReactNode; children: ReactNode; final: ReactNode; rightLabel?: string; leftLabel: string; leftName: string;
+/** Label/value rows for a .box. A third element true = LTR number (phones, ids). */
+export function Dl({ title, rows }: { title: string; rows: [string, ReactNode, boolean?][] }) {
+  return <div className="box"><h3>{title}</h3><dl>{rows.map(([k, v, n]) => <Fragment key={k}><dt>{k}</dt><dd className={n ? "num" : undefined}>{v ?? "—"}</dd></Fragment>)}</dl></div>;
+}
+export const phonesOf = (p: string[] | null | undefined) => (p && p.length ? p.join(" - ") : null);
+
+export function OfficialSheet({ co, who, title, titleEn, pdfPath, status, boxes, children, final, rightLabel = "المحاسب", leftLabel, leftName = "", wide }: {
+  co: Co | null; who: string | null; title: string; titleEn: string; pdfPath: string; status?: string; boxes?: ReactNode; children: ReactNode; final?: ReactNode; rightLabel?: string; leftLabel: string; leftName?: string; wide?: boolean;
 }) {
   if (!co || who === null) return <Loading err="" />;
   const pdf = `/api/pdf?path=${encodeURIComponent(pdfPath)}`;
@@ -40,13 +46,13 @@ export function OfficialSheet({ co, who, title, titleEn, pdfPath, status, boxes,
           <div className="title"><b>{title}</b><small>{titleEn}</small></div>
         </div>
         {status && statusStamp(status) && <div className="stampbar">{statusStamp(status)}</div>}
-        <div className="boxes">{boxes}</div>
+        {boxes && <div className="boxes" style={wide ? { gridTemplateColumns: "1fr" } : undefined}>{boxes}</div>}
         {children}
         <div className="final">
           {final}
           <div className="sign">
             <div className="sigcol"><div className="who"><span>{rightLabel}</span><b>{who || " "}</b></div><img className="sig" src="/brand/signature.webp" alt="" /><img className="seal" src="/brand/stamp.webp" alt="ختم الشركة" /></div>
-            <div className="sigcol"><div className="who"><span>{leftLabel}</span><b>{leftName}</b></div></div>
+            <div className="sigcol"><div className="who"><span>{leftLabel}</span><b>{leftName || "\u00a0"}</b></div></div>
           </div>
         </div>
       </div>

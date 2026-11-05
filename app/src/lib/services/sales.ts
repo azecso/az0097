@@ -456,7 +456,7 @@ export async function listQuotes(tx: Tx) {
     FROM sales_quotes q JOIN contacts c ON c.id = q.customer_id ORDER BY q.doc_date DESC, q.created_at DESC LIMIT 300`;
 }
 export async function getQuote(tx: Tx, id: string): Promise<Record<string, any>> {
-  const [h] = await tx`SELECT q.id, q.draft_ref AS "draftRef", q.doc_no AS "docNo", q.doc_date::text AS "docDate", q.valid_until::text AS "validUntil", q.customer_id AS "customerId", c.name AS "customerName",
+  const [h] = await tx`SELECT q.id, q.draft_ref AS "draftRef", q.doc_no AS "docNo", q.doc_date::text AS "docDate", q.valid_until::text AS "validUntil", q.customer_id AS "customerId", c.name AS "customerName", c.phones AS "customerPhones", c.address AS "customerAddress",
       q.currency, q.exchange_rate_snapshot::text AS "exchangeRate", q.discount::text AS discount, q.total::text AS total, q.terms, q.notes, q.status, q.version, q.invoice_id AS "invoiceId"
     FROM sales_quotes q JOIN contacts c ON c.id = q.customer_id WHERE q.id = ${id}`;
   if (!h) throw notFound();
@@ -479,7 +479,7 @@ export async function convertQuote(tx: Tx, who: Principal, actor: Actor, id: str
 void forbidden;
 
 export async function getDelivery(tx: Tx, id: string) {
-  const [h] = await tx`SELECT dn.id, dn.doc_no AS "docNo", dn.draft_ref AS "draftRef", dn.doc_date::text AS "docDate", si.doc_no AS "invoiceNo", c.name AS "customerName", dn.recipient_note AS "recipientNote", dn.status
+  const [h] = await tx`SELECT dn.id, dn.doc_no AS "docNo", dn.draft_ref AS "draftRef", dn.doc_date::text AS "docDate", si.doc_no AS "invoiceNo", c.name AS "customerName", c.phones AS "customerPhones", c.address AS "customerAddress", dn.recipient_note AS "recipientNote", dn.status
     FROM delivery_notes dn JOIN sales_invoices si ON si.id = dn.invoice_id JOIN contacts c ON c.id = si.customer_id WHERE dn.id = ${id}`;
   if (!h) throw notFound();
   const lines = await tx`SELECT p.code AS "productCode", p.name AS "productName", sl.uom, dl.qty_base::text AS "qtyBase" FROM delivery_lines dl JOIN sales_lines sl ON sl.id = dl.sales_line_id JOIN products p ON p.id = sl.product_id WHERE dl.delivery_id = ${id} ORDER BY dl.line_no`;

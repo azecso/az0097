@@ -51,6 +51,23 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   ok("receipt: one official A4 page with customer, accountant, amount in words and the unallocated-credit note", pages(rbuf) === 1 && rtxt.includes("مروان المرعي") && /owner/.test(rtxt) && rtxt.includes("مليون") && rtxt.includes("07705550101") && rtxt.includes("info@alshams.example"));
   ok("receipt: signature and stamp embedded", execFileSync("pdfimages", ["-list", "inv/receipt.pdf"], { encoding: "utf8" }).split("\n").filter((l) => /^\s*\d+\s+\d+\s+image/.test(l)).length >= 4);
   execFileSync("pdftoppm", ["-r", "70", "-png", "inv/receipt.pdf", "inv/receipt"]);
+  // every other printable document uses the same official sheet
+  const accts = await (await ctx.request.get(B + "/api/cash-accounts")).json(); const other = accts.find((c) => c.id !== cash.id && c.currency === "IQD");
+  const quote = await post("/api/sales-quotes", { customerId: cust.id, docDate: "2026-11-05", validUntil: "2026-11-20", currency: "IQD", discount: "0", lines: [{ productId: prod.id, uom: "قطعة", qty: "3", unitPrice: "2500", lineDiscount: "0" }] });
+  const pay = await post("/api/supplier-payments", { supplierId: sup.id, docDate: "2026-11-05", cashAccountId: cash.id, currency: "IQD", amount: "300000", allocations: [{ purchaseId: buy.id, amount: "300000" }] }); await post(`/api/supplier-payments/${pay.id}/post`, {});
+  const tr = await post("/api/cash-transfers", { docDate: "2026-11-05", fromAccountId: cash.id, toAccountId: other.id, amount: "100000", notes: "تسليم عهدة" }); await post(`/api/cash-transfers/${tr.id}/post`, {});
+  const cap = await post("/api/capital-returns", { returnedAt: "2026-11-05T10:30:00.000Z", currency: "IQD", amount: "750000", recipientName: "صاحب المال", refNo: "R-9", method: "CASH" });
+  const dels = await (await ctx.request.get(B + "/api/delivery-notes")).json(); const del = dels.find((x) => x.status === "POSTED");
+  const docs = [["quote", `/print/sales-quote/${quote.id}`, ["مروان المرعي"]], ["purchase", `/print/purchase/${buy.id}`, ["مورد قطع الغيار"]], ["payment", `/print/supplier-payment/${pay.id}`, ["مورد قطع الغيار", "300"]],
+    ["transfer", `/print/cash-transfer/${tr.id}`, ["تسليم عهدة"]], ["capital-return", `/print/capital-return/${cap.id}`, ["صاحب المال", "R-9"]],
+    ["statement", `/print/statement/customer/${cust.id}`, ["مروان المرعي"]], ["trial-balance", `/print/report/trial-balance`, ["1300"]], ["analytics", `/print/analytics?type=sales&group=party`, []]];
+  if (del) docs.push(["delivery", `/print/delivery/${del.id}`, ["مروان المرعي"]]);
+  for (const [name, path, must] of docs) {
+    const r = await ctx.request.get(B + `/api/pdf?path=${encodeURIComponent(path)}`); const buf = await r.body(); fs.writeFileSync(`inv/doc-${name}.pdf`, buf);
+    const t = execFileSync("pdftotext", [`inv/doc-${name}.pdf`, "-"], { encoding: "utf8" }); const im = execFileSync("pdfimages", ["-list", `inv/doc-${name}.pdf`], { encoding: "utf8" }).split("\n").filter((l) => /^\s*\d+\s+\d+\s+image/.test(l)).length;
+    ok(`${name}: official A4 sheet (company header + footer data, accountant, signature and stamp images)`, buf.slice(0, 5).toString() === "%PDF-" && pages(buf) >= 1 && must.every((m) => t.includes(m)) && /owner/.test(t) && t.includes("info@alshams.example") && im >= 4);
+    execFileSync("pdftoppm", ["-r", "60", "-f", "1", "-l", "1", "-png", `inv/doc-${name}.pdf`, `inv/doc-${name}`]);
+  }
   ok("50 lines span several pages, 1 line fits a single page", results[1] === 1 && results[50] >= 2);
   console.log(out.join("\n")); console.log("PAGES " + JSON.stringify(results)); await b.close();
 })().catch((e) => { console.log("SMOKE ERROR " + e.message); process.exit(1); });

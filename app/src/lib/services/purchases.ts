@@ -114,7 +114,7 @@ export async function purchaseOutstanding(tx: Tx, purchaseId: string) {
 }
 
 export async function getPurchase(tx: Tx, id: string) {
-  const [h] = await tx`SELECT po.id, po.draft_ref AS "draftRef", po.doc_no AS "docNo", po.doc_date::text AS "docDate", po.supplier_id AS "supplierId", c.name AS "supplierName",
+  const [h] = await tx`SELECT po.id, po.draft_ref AS "draftRef", po.doc_no AS "docNo", po.doc_date::text AS "docDate", po.supplier_id AS "supplierId", c.name AS "supplierName", c.phones AS "supplierPhones", c.address AS "supplierAddress",
       po.supplier_invoice_no AS "supplierInvoiceNo", po.payment_type AS "paymentType", po.cash_account_id AS "cashAccountId", po.due_date::text AS "dueDate", po.currency,
       po.exchange_rate_snapshot::text AS "exchangeRate", po.total::text AS total, po.total_base::text AS "totalBase", po.status, po.version, po.notes
     FROM purchase_orders po JOIN contacts c ON c.id = po.supplier_id WHERE po.id = ${id}`;
