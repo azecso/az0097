@@ -44,7 +44,7 @@
 .inv .who { border-top: 1.5px solid var(--navy); padding-top: 5px; margin-top: 21mm; display: flex; flex-direction: column; }
 .inv .who span { color: #5a6577; font-size: 11px; } .inv .who b { color: var(--navy); font-size: 13px; }
 .inv .sig { position: absolute; top: 3mm; left: 50%; width: 42mm; transform: translateX(-50%) rotate(-2deg); }
-.inv .seal { position: absolute; top: 35mm; left: 50%; width: 31mm; opacity: .8; transform: translateX(-62%) rotate(-14deg); }
+.inv .seal { position: absolute; top: 35mm; left: 50%; width: 31mm; opacity: .78; mix-blend-mode: multiply; transform: translateX(-62%) rotate(-14deg); }
 
 .inv .foot { position: fixed; inset-inline: 12mm; bottom: -23mm; z-index: 2; border-top: 2px solid var(--gold); padding-top: 4px; font-size: 10.5px; color: #3a4556; text-align: center; background: #fff; }
 .inv .foot b { color: var(--navy); } .inv .foot .row2 { display: flex; flex-wrap: wrap; gap: 4px 14px; justify-content: center; margin-top: 2px; }
