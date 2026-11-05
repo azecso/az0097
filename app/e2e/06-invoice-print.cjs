@@ -56,6 +56,12 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   ok("receipt: one official A4 page with customer, accountant, amount in words and the unallocated-credit note", pages(rbuf) === 1 && rtxt.includes("مروان المرعي") && /owner/.test(rtxt) && rtxt.includes("مليون") && rtxt.includes("07705550101") && rtxt.includes("info@alshams.example"));
   ok("receipt: signature and stamp embedded", execFileSync("pdfimages", ["-list", "inv/receipt.pdf"], { encoding: "utf8" }).split("\n").filter((l) => /^\s*\d+\s+\d+\s+image/.test(l)).length >= 4);
   execFileSync("pdftoppm", ["-r", "70", "-png", "inv/receipt.pdf", "inv/receipt"]);
+  // a receipt that settles an existing customer credit prints with the SAME title: سند قبض (the source line says it came from the customer's credit)
+  const sinv0 = await make(1, null); const ca = await post("/api/customer-receipts", { customerId: cust.id, docDate: "2026-11-05", kind: "CREDIT_APPLICATION", cashAccountId: null, currency: "IQD", amount: "3000", allocations: [{ invoiceId: sinv0.id, amount: "3000" }] }); await post(`/api/customer-receipts/${ca.id}/post`, {});
+  const cab = await (await ctx.request.get(B + `/api/pdf?path=${encodeURIComponent("/print/receipt/" + ca.id)}`)).body(); fs.writeFileSync("inv/receipt-credit.pdf", cab);
+  const catxt = execFileSync("pdftotext", ["inv/receipt-credit.pdf", "-"], { encoding: "utf8" });
+  ok("credit-settlement receipt prints as a plain receipt voucher (title سند قبض, not تسوية رصيد دائن)", /CREDIT/.test(catxt) === false && catxt.replace(/\s/g, "").includes("سندقبض") && !catxt.replace(/\s/g, "").includes("تسويةرصيددائن"));
+  execFileSync("pdftoppm", ["-r", "60", "-png", "inv/receipt-credit.pdf", "inv/receipt-credit"]);
   // every other printable document uses the same official sheet
   const accts = await (await ctx.request.get(B + "/api/cash-accounts")).json(); const other = accts.find((c) => c.id !== cash.id && c.currency === "IQD");
   const quote = await post("/api/sales-quotes", { customerId: cust.id, docDate: "2026-11-05", validUntil: "2026-11-20", currency: "IQD", discount: "0", lines: [{ productId: prod.id, uom: "قطعة", qty: "3", unitPrice: "2500", lineDiscount: "0" }] });
