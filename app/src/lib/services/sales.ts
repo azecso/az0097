@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { coverByCredit, unappliedCredits } from "./analytics";
 import Decimal from "decimal.js";
 import type { Tx } from "../db";
 import { audit, type Actor } from "../audit";
@@ -125,9 +124,8 @@ export async function listInvoices(tx: Tx, status?: string) {
   const rows = await tx`SELECT si.id, si.customer_id AS "customerId", si.draft_ref AS "draftRef", si.doc_no AS "docNo", si.doc_date::text AS "docDate", c.name AS "customerName", si.sale_type AS "saleType", si.currency, si.net::text AS net, si.status, si.due_date::text AS "dueDate",
       CASE WHEN si.status = 'POSTED' THEN (si.net - COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED'), 0)
         - COALESCE((SELECT sum(applied_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0))::text END AS outstanding
-    FROM sales_invoices si JOIN contacts c ON c.id = si.customer_id WHERE (${status ?? null}::text IS NULL OR si.status = ${status ?? null}) ORDER BY si.doc_date DESC, si.created_at DESC LIMIT 300`;
-  const cover = coverByCredit((rows as unknown as Record<string, any>[]).map((r) => ({ id: r.id, partyId: r.customerId, currency: r.currency, status: r.status, outstanding: r.outstanding, date: r.docDate })), await unappliedCredits(tx, "debtors"));
-  return (rows as unknown as Record<string, any>[]).map((r) => ({ ...r, creditCovered: cover.get(r.id) ?? "0" }));
+    FROM sales_invoices si JOIN contacts c ON c.id = si.customer_id WHERE ((${status ?? null}::text IS NULL AND si.status <> 'REVERSED') OR si.status = ${status ?? null}) ORDER BY si.doc_date DESC, si.created_at DESC LIMIT 300`;
+  return rows;
 }
 
 export async function getInvoice(tx: Tx, id: string) {
@@ -172,7 +170,7 @@ export async function postInvoice(tx: Tx, who: Principal, actor: Actor, id: stri
     givenB = givenB.plus(shB); givenO = givenO.plus(shO);
     await tx`UPDATE sales_lines SET line_total_base = ${lineBase[i]!.toString()}, net_line_base = ${lineBase[i]!.minus(shB).toString()}, net_line_orig = ${d(l.line_total).minus(shO).toString()} WHERE id = ${l.id}`;
   }
-  const docNo = (await tx`SELECT next_document_number(${who.companyId}, 'sales_invoice', ${yearOf(date)}) AS n`)[0]!.n as string;
+  const docNo = (inv.doc_no as string | null) ?? (await tx`SELECT next_document_number(${who.companyId}, 'sales_invoice', ${yearOf(date)}) AS n`)[0]!.n as string;   // an amended invoice keeps its number
   const jl: JLine[] = [{ account: "1200", debit: netBase, currency: cur, amountOrig: inv.net, fx, contactId: inv.customer_id }];
   if (discBase.gt(0)) jl.push({ account: "4150", debit: discBase, currency: cur, amountOrig: inv.discount, fx });
   jl.push({ account: "4100", credit: grossBase, currency: cur, amountOrig: inv.gross, fx });
@@ -206,6 +204,29 @@ export async function reverseInvoice(tx: Tx, who: Principal, actor: Actor, id: s
   await tx`UPDATE sales_invoices SET status = 'REVERSED', version = version + 1, updated_at = now() WHERE id = ${id}`;
   await audit(tx, actor, { action: "sales_invoice.reverse", entityType: "sales_invoice", entityId: id, reason });
   return { id, status: "REVERSED" };
+}
+
+/**
+ * Edit a POSTED invoice. Its number does not change and no "reversal" is shown to the user: the old record is silently reversed (stock back, ledger undone — the journal itself stays append-only),
+ * renamed "<no>~rXXXX" and hidden from the lists, then a new record carrying the ORIGINAL number is created and posted. Refused when the invoice has payments, returns or is in an approved profit settlement.
+ */
+export async function amendInvoice(tx: Tx, who: Principal, actor: Actor, id: string, i: z.infer<typeof invoiceUpdateSchema>) {
+  const [inv] = await tx`SELECT * FROM sales_invoices WHERE id = ${id} FOR UPDATE`;
+  if (!inv) throw notFound();
+  if (inv.status !== "POSTED") throw conflict("NOT_POSTED", "التعديل بهذه الطريقة للفواتير المرحّلة فقط");
+  if (inv.version !== i.version) throw conflict("VERSION_CONFLICT", "تم تعديل الفاتورة من جهة أخرى؛ أعد فتحها");
+  if ((await tx`SELECT 1 FROM profit_settlement_lines l JOIN profit_settlements s ON s.id = l.settlement_id WHERE l.invoice_id = ${id} AND s.status = 'POSTED'`).length)
+    throw conflict("IN_SETTLEMENT", "أرباح هذه الفاتورة داخلة في تسوية أرباح معتمدة؛ اعكس التسوية أولاً");
+  if (inv.delivery_mode === "SEPARATE" && (await tx`SELECT 1 FROM delivery_notes WHERE invoice_id = ${id} AND status = 'POSTED'`).length)
+    throw conflict("HAS_DELIVERIES", "توجد سندات تسليم مرحّلة لهذه الفاتورة؛ اعكسها أولاً");
+  await reverseInvoice(tx, who, actor, id, "تعديل الفاتورة");                       // also refuses when there are returns or customer payments
+  await tx`SELECT set_config('app.amend', 'on', true)`;
+  await tx`UPDATE sales_invoices SET doc_no = ${`${inv.doc_no}~r${Date.now().toString(36)}`}, updated_at = now() WHERE id = ${id}`;
+  const created = await createInvoice(tx, who, actor, { ...i, quoteId: inv.quote_id });
+  await tx`UPDATE sales_invoices SET doc_no = ${inv.doc_no}, amended_from = ${id} WHERE id = ${created.id}`;
+  const posted = (await postInvoice(tx, who, actor, created.id as string)) as unknown as { docNo: string };
+  await audit(tx, actor, { action: "sales_invoice.amend", entityType: "sales_invoice", entityId: created.id, before: { id, docNo: inv.doc_no, net: inv.net }, after: { docNo: posted.docNo } });
+  return { id: created.id as string, docNo: posted.docNo as string };
 }
 
 // =========================== delivery notes (goods issue + COGS) ===========================

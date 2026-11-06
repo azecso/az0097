@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { payState, totalsByCurrency } from "@/lib/pay";
 import { money } from "@/lib/client";
@@ -8,13 +9,14 @@ import { StatusBadge, useLoad } from "@/components/ui";
 
 interface Row { id: string; draftRef: string; docNo: string | null; docDate: string; customerName: string; saleType: string; currency: string; net: string; status: string; outstanding: string | null; creditCovered?: string }
 export default function Sales() {
-  const me = useMe(); const router = useRouter(); const { data, err } = useLoad<Row[]>("/api/sales-invoices", []);
+  const me = useMe(); const router = useRouter(); const [cancelled, setCancelled] = useState(false); const { data, err } = useLoad<Row[]>(cancelled ? "/api/sales-invoices?status=REVERSED" : "/api/sales-invoices", []);
   return (<>
     <h1>المبيعات</h1>
     <p style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
       {can(me, "sales:create") && <Link href="/sales/new"><button className="primary">+ فاتورة بيع</button></Link>}
       <Link href="/sales/quotes"><button>عروض الأسعار</button></Link><Link href="/sales/receipts"><button>سندات القبض</button></Link>
       <Link href="/sales/deliveries"><button>سندات التسليم</button></Link><Link href="/sales/returns"><button>المرتجعات</button></Link></p>
+    <label style={{ display: "inline-flex", gap: 6, alignItems: "center", margin: "4px 0" }}><input type="checkbox" checked={cancelled} onChange={(e) => setCancelled(e.target.checked)} />إظهار الفواتير المحذوفة</label>
     {err && <div className="msg err">{err}</div>}
     <div className="card cards-as-list"><table><thead><tr><th>الرقم</th><th>التاريخ</th><th>العميل</th><th>النوع</th><th>الصافي</th><th>الحالة</th></tr></thead>
       <tbody>{data.map((r) => <tr key={r.id} className={`clickrow${payState(r.status, r.net, r.outstanding, r.creditCovered)?.key === "PAID" ? " paidrow" : ""}`} tabIndex={0} onClick={() => router.push(`/sales/${r.id}`)} onKeyDown={(e) => { if (e.key === "Enter") router.push(`/sales/${r.id}`); }}><td><Link href={`/sales/${r.id}`}><span className="num">{r.docNo ?? r.draftRef}</span></Link></td><td><span className="num">{r.docDate}</span></td><td>{r.customerName}</td>

@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { coverByCredit, unappliedCredits } from "./analytics";
 import Decimal from "decimal.js";
 import type { Tx } from "../db";
 import { audit, type Actor } from "../audit";
@@ -134,8 +133,7 @@ export async function listPurchases(tx: Tx, status?: string) {
         - COALESCE((SELECT sum(r.total_orig) FROM purchase_returns r WHERE r.purchase_id = po.id AND r.status = 'POSTED' AND r.settlement = 'REDUCE_PAYABLE'), 0))::text END AS outstanding
     FROM purchase_orders po JOIN contacts c ON c.id = po.supplier_id WHERE (${status ?? null}::text IS NULL OR po.status = ${status ?? null})
     ORDER BY po.doc_date DESC, po.created_at DESC LIMIT 300`;
-  const cover = coverByCredit((rows as unknown as Record<string, any>[]).map((r) => ({ id: r.id, partyId: r.supplierId, currency: r.currency, status: r.status, outstanding: r.outstanding, date: r.docDate })), await unappliedCredits(tx, "creditors"));
-  return (rows as unknown as Record<string, any>[]).map((r) => ({ ...r, creditCovered: cover.get(r.id) ?? "0" }));
+  return rows;
 }
 
 /** POST: assigns the final number, creates FIFO layers and the balanced journal entry in ONE transaction. */

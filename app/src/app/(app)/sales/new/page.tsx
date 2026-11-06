@@ -16,7 +16,7 @@ function Inner() {
   const sp = useSearchParams(); const editId = sp.get("edit"); const srcId = editId ?? sp.get("copy"); const ex = useLoad<any>(srcId ? `/api/sales-invoices/${srcId}` : null, null).data; const ed = editId ? ex : null;
   const [type, setType] = useState("CREDIT"); const [cur, setCur] = useState("IQD"); const [lines, setLines] = useState<Line[]>([blank]); const [disc, setDisc] = useState("");
   const tr = (v: string | null | undefined) => (v && v.includes(".") ? v.replace(/\.?0+$/, "") : v ?? "");
-  useEffect(() => { if (!ex || (editId && ex.status !== "DRAFT")) return; setType(ex.saleType); setCur(ex.currency); setDisc(tr(ex.discount) === "0" ? "" : tr(ex.discount));
+  useEffect(() => { if (!ex || (editId && ex.status !== "DRAFT" && ex.status !== "POSTED")) return; setType(ex.saleType); setCur(ex.currency); setDisc(tr(ex.discount) === "0" ? "" : tr(ex.discount));
     setLines(ex.lines.map((l: any) => ({ productId: l.productId, uom: l.uom, qty: tr(l.qty), unitPrice: tr(l.unitPrice), lineDiscount: tr(l.lineDiscount) === "0" ? "" : tr(l.lineDiscount), locationId: l.locationId ?? "" }))); }, [ex]);
   const upd = (i: number, k: keyof Line, v: string) => setLines((ls) => ls.map((l, j) => j !== i ? l : { ...l, [k]: v, ...(k === "productId" ? { uom: prods.find((p) => p.id === v)?.baseUom ?? "", unitPrice: prods.find((p) => p.id === v)?.defaultSalePrice ?? l.unitPrice } : {}) }));
   const gross = lines.reduce((s, l) => s + Math.max(0, Number(l.qty || 0) * Number(l.unitPrice || 0) - Number(l.lineDiscount || 0)), 0);   // preview only; the server computes exactly with decimals
@@ -26,12 +26,12 @@ function Inner() {
       cashAccountId: type === "CASH" ? String(f.get("cash")) : null, dueDate: type === "CREDIT" && f.get("due") ? String(f.get("due")) : null, currency: cur, exchangeRate: cur === "USD" ? String(f.get("rate") || "") || null : null,
       deliveryMode: String(f.get("mode")), discount: disc || "0", terms: String(f.get("terms") ?? "") || null, notes: String(f.get("notes") ?? "") || null,
       lines: lines.map((l) => ({ productId: l.productId, uom: l.uom, qty: l.qty, unitPrice: l.unitPrice, lineDiscount: l.lineDiscount || "0", locationId: l.locationId || null })) };
-    if (editId) { if (!ex) return; const u = await run(() => api(`/api/sales-invoices/${editId}`, { method: "PUT", body: { ...payload, version: ex.version } }), "تم حفظ التعديل"); if (u !== undefined) router.push(`/sales/${editId}`); return; }
+    if (editId) { if (!ex) return; const posted = ex.status === "POSTED"; const u = await run(() => api<{ id: string }>(posted ? `/api/sales-invoices/${editId}/amend` : `/api/sales-invoices/${editId}`, { method: posted ? "POST" : "PUT", body: { ...payload, version: ex.version } }), "تم حفظ التعديل"); if (u !== undefined) router.push(`/sales/${posted ? u.id : editId}`); return; }
     const r = await run(() => createDraft({ entityType: "sales_invoice", endpoint: "/api/sales-invoices", title: "فاتورة بيع (أوفلاين)", payload }), "تم حفظ المسودة");
     if (r?.mode === "queued") { setMsg({ t: "ok", m: "📴 حُفظت على جهازك مشفّرة وبانتظار المزامنة — ستُرسل تلقائياً عند عودة الاتصال (تابعها من «المزامنة»)." }); setLines([blank]); setDisc(""); } else if (r) router.push(`/sales/${r.id}`);
   }
   return (<>
-    <h1>{editId ? "تعديل فاتورة بيع (مسودة)" : sp.get("copy") ? "فاتورة بيع مصحَّحة (نسخة جديدة)" : "فاتورة بيع جديدة"}</h1>{editId && ex && ex.status !== "DRAFT" && <div className="msg err">لا يمكن تعديل مستند مرحّل؛ استخدم «إلغاء بقيد عكسي» ثم أنشئ فاتورة جديدة.</div>}
+    <h1>{editId ? "تعديل فاتورة بيع (مسودة)" : sp.get("copy") ? "فاتورة بيع مصحَّحة (نسخة جديدة)" : "فاتورة بيع جديدة"}</h1>{editId && ex && ex.status !== "DRAFT" && ex.status !== "POSTED" && <div className="msg err">هذه الفاتورة محذوفة ولا يمكن تعديلها.</div>}{editId && ex?.status === "POSTED" && <div className="msg">فاتورة مرحّلة: يبقى رقمها <strong className="num">{ex.docNo}</strong> وتُعاد حركة المخزون والقيود تلقائياً. لا يصح التعديل إن كان عليها قبض أو مرتجع.</div>}
     <p>تُحفظ مسودة؛ عند الترحيل يصدر الرقم النهائي، وتُسجَّل المبيعات، وتخرج البضاعة من أقدم الطبقات وتُحتسب تكلفتها (سند تسليم تلقائي).</p>
     <form key={ex?.id ?? "new"} className="card" onSubmit={save} style={{ display: "grid", gap: 12 }}>
       <div className="row">

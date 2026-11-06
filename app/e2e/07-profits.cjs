@@ -37,8 +37,9 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   ok("ledger balanced and capital account unchanged by expenses and withdrawals", tb.balanced === true && Number(c3100.credit) - Number(c3100.debit) === 10000000);
   // invoice 9,000 (cost 7,000): 8,000 collected in cash, 1,000 of the profit was already distributed outside the system
   const inv2 = await post("/api/sales-invoices", { customerId: cust.id, docDate: "2026-11-05", saleType: "CREDIT", currency: "IQD", deliveryMode: "WITH_INVOICE", discount: "0", lines: [{ productId: prod.id, uom: "قطعة", qty: "1", unitPrice: "9000", lineDiscount: "0" }] }); await post(`/api/sales-invoices/${inv2.id}/post`, {});
-  await p.goto(B + "/sales/receipts"); await wait("#c"); await p.selectOption("#c", { label: "عميل الأرباح" }); await p.fill("#a", "8000");
-  await p.waitForSelector("td:has-text('بدون أرباح')"); await p.click("label:has-text('بدون أرباح') input"); await p.fill("input[aria-label='مبلغ الربح الموزَّع خارج النظام']", "1000"); await p.fill("input[aria-label='ملاحظة']", "ربح سُلّم للشريكين مباشرة");
+  await p.goto(B + "/sales/receipts"); await wait("#c"); await p.selectOption("#c", { label: "عميل الأرباح" });
+  await p.waitForSelector("td:has-text('بدون أرباح')"); ok("nothing is allocated automatically: the invoice list waits for the user's choice", (await p.inputValue("input[aria-label^='المبلغ المقبوض على']")) === "");
+  await p.fill("input[aria-label^='المبلغ المقبوض على']", "8000"); await p.waitForFunction(() => document.querySelector("#a").value === "8000"); await p.click("label:has-text('بدون أرباح') input"); await p.fill("input[aria-label='مبلغ الربح الموزَّع خارج النظام']", "1000"); await p.fill("input[aria-label='ملاحظة']", "ربح سُلّم للشريكين مباشرة");
   ok("the box shows what is settled and what remains (0 after 8,000 cash + 1,000 outside)", (await p.textContent("small:has-text('الباقي بعد السند')")).includes("0"));
   await p.click("button.primary:has-text('حفظ كمسودة')"); await wait(".msg.ok"); await p.click("td button.primary:has-text('ترحيل')"); await p.waitForFunction(() => document.querySelector(".msg.ok")?.textContent.includes("تم الترحيل"));
   const g2 = await (await ctx.request.get(B + `/api/sales-invoices/${inv2.id}`)).json();
@@ -50,6 +51,17 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   ok("the printed receipt shows the FULL amount 9,000 like the invoice (not only the 8,000 cash)", rtxt.includes("9,000") && !rtxt.includes("1,000"));
   await p.goto(B + "/profits"); await wait("h2:has-text('بيان الربح')"); await p.waitForFunction(() => document.body.textContent.includes("وُزّعت خارج النظام"));
   ok("profit statement mentions the externally distributed profit without distributing it again", (await p.textContent("body")).includes("1,000"));
+  // edit and delete a POSTED invoice from its page: same number, no reversal shown
+  const inv3 = await post("/api/sales-invoices", { customerId: cust.id, docDate: "2026-11-05", saleType: "CREDIT", currency: "IQD", deliveryMode: "WITH_INVOICE", discount: "0", lines: [{ productId: prod.id, uom: "قطعة", qty: "1", unitPrice: "5000", lineDiscount: "0" }] }); const posted3 = await post(`/api/sales-invoices/${inv3.id}/post`, {});
+  await p.goto(B + `/sales/${inv3.id}`); await wait("button:has-text('تعديل الفاتورة')");
+  ok("posted invoice page offers edit and delete, and no reversal card", (await p.locator("button:has-text('حذف الفاتورة')").count()) === 1 && !(await p.textContent("body")).includes("عكس الفاتورة"));
+  await p.click("button:has-text('تعديل الفاتورة')"); await p.waitForURL(/\/sales\/new\?edit=/); await p.waitForFunction(() => [...document.querySelectorAll(".row.card input")].some((i) => i.value === "5000"));
+  for (const i of await p.locator(".row.card input").all()) if (await i.evaluate((n) => n.value === "1" && n.getAttribute("inputmode") === "decimal")) { await i.fill("3"); break; }
+  await p.click("button.primary:has-text('حفظ كمسودة')"); await p.waitForURL((u) => /\/sales\/[0-9a-f-]{36}$/.test(u.pathname) && !u.pathname.endsWith(inv3.id)); await p.waitForFunction(() => document.body.textContent.includes("15,000"));
+  ok("editing a posted invoice keeps its number and recomputes the total (3 x 5,000)", (await p.textContent("h1")).includes(posted3.docNo));
+  const lst = await (await ctx.request.get(B + "/api/sales-invoices")).json(); ok("the list shows ONE record for that number (old version hidden)", lst.filter((x) => x.docNo === posted3.docNo).length === 1);
+  p.once("dialog", (dlg) => void dlg.accept("إدخال خاطئ")); await p.click("button:has-text('حذف الفاتورة')"); await p.waitForURL(B + "/sales"); await p.waitForFunction((n) => !document.body.textContent.includes(n), posted3.docNo);
+  ok("deleting a posted invoice removes it from the list", true);
   await p.setViewportSize({ width: 390, height: 800 }); await p.goto(B + "/profits"); await wait("h1"); ok("mobile /profits: no horizontal scroll", await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   ok("no console/page errors", errs.length === 0); if (errs.length) out.push("ERRORS: " + errs.slice(0, 4).join(" | "));
   console.log(out.join("\n")); await b.close();

@@ -65,8 +65,9 @@ export default function InvoiceView() {
       <button disabled={busy || reason.length < 3} onClick={async () => { const lines = d.lines.filter((l) => ret[l.id]).map((l) => ({ salesLineId: l.id, qtyBase: ret[l.id] }));
         const r = await run(() => api<{ id: string }>("/api/sales-returns", { method: "POST", body: { invoiceId: id, docDate: today(), reason, settlement: "REDUCE_RECEIVABLE", lines } }), "حُفظ المرتجع");
         if (r) await run(() => api(`/api/sales-returns/${r.id}/post`, { method: "POST" }), "تم ترحيل المرتجع"); }}>إنشاء وترحيل المرتجع</button></div>}
-    {posted && can(me, "sales:cancel") && <div className="card" style={{ marginTop: 12 }}><h2>عكس الفاتورة</h2><p>يُنشأ قيد عكسي ويعود المخزون؛ لا يُحذف شيء.</p>
-      <div className="row"><div><label>السبب</label><input value={reason} onChange={(e) => setReason(e.target.value)} /></div><button className="danger" disabled={busy || reason.length < 3} onClick={() => run(() => api(`/api/sales-invoices/${id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")}>عكس</button>
-        <button disabled={busy || reason.length < 3} title="يعكس الفاتورة ثم يفتح نسخة جديدة منها للتعديل" onClick={async () => { const r = await run(() => api(`/api/sales-invoices/${id}/reverse`, { method: "POST", body: { reason } }), "تم العكس — عدّل النسخة الجديدة وارفضها أو رحّلها"); if (r !== undefined) router.push(`/sales/new?copy=${id}`); }}>✏️ تصحيح (عكس + نسخة جديدة)</button></div></div>}
+    {posted && can(me, "sales:cancel") && <div className="card" style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <Link href={`/sales/new?edit=${id}`}><button>✏️ تعديل الفاتورة</button></Link>
+      <button className="danger" disabled={busy} onClick={async () => { const why = window.prompt("سبب حذف الفاتورة (يُحفظ في سجل التدقيق)؟"); if (!why || why.trim().length < 3) return; const r = await run(() => api(`/api/sales-invoices/${id}/reverse`, { method: "POST", body: { reason: why.trim() } }), "حُذفت الفاتورة"); if (r !== undefined) router.push("/sales"); }}>🗑 حذف الفاتورة</button>
+      <small style={{ flexBasis: "100%" }}>يبقى رقم الفاتورة عند التعديل. لا يمكن تعديل أو حذف فاتورة عليها قبض أو مرتجع (احذف السند أولاً).</small></div>}
   </>);
 }

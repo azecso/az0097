@@ -152,7 +152,7 @@ describe("cash ledger shows where each amount came from", () => {
 });
 
 describe("customer summary and credit-aware invoice list", () => {
-  it("one row per customer: total sales, returns, paid (incl. unallocated receipts) and remaining; list marks the invoice partly paid", async () => {
+  it("one row per customer: total sales, returns, paid (incl. unallocated receipts) and remaining; the invoice itself stays open", async () => {
     const c4 = (await w.api(w.owner, w.R.contacts.POST, { method: "POST", body: { kind: "CUSTOMER", code: "C-RP4", name: "عميل رابع", paymentTermsDays: 0 } })).body.id;
     const P = await w.mkProduct("RP10"); await w.buy({ product: P, qty: "50", price: "1000", date: "2026-08-01" });
     const i1 = await w.sale({ product: P, qty: "10", price: "306000", date: "2026-08-05", type: "CREDIT", customer: c4 });
@@ -163,7 +163,7 @@ describe("customer summary and credit-aware invoice list", () => {
     expect(sm.rows[0]).toMatchObject({ party: "عميل رابع", currency: "IQD", invoices: 1, invoiceDate: "2026-08-05", status: "PARTIAL" });
     expect(Number(sm.rows[0].sales)).toBe(3060000); expect(Number(sm.rows[0].paid)).toBe(2920000); expect(Number(sm.rows[0].remaining)).toBe(140000);
     const row = (await w.api(w.owner, w.R.invoices.GET)).body.find((x: any) => x.id === i1.id);
-    expect(Number(row.outstanding)).toBe(3060000); expect(Number(row.creditCovered)).toBe(2920000);        // list shows 140,000 left (3,060,000 - 2,920,000 covered)
+    expect(Number(row.outstanding)).toBe(3060000); expect(row.creditCovered).toBeUndefined();          // nothing is allocated implicitly: the invoice stays open until the user collects on it explicitly
     const all = (await get(w.R.repCust, "/api/reports/customers-summary")).body;
     expect(all.rows.length).toBeGreaterThanOrEqual(2); expect(all.totals.every((t: any) => Number(t.sales) >= Number(t.paid))).toBe(true);
   });
