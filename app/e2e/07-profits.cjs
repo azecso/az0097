@@ -51,6 +51,14 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   ok("the printed receipt shows the FULL amount 9,000 like the invoice (not only the 8,000 cash)", rtxt.includes("9,000") && !rtxt.includes("1,000"));
   await p.goto(B + "/profits"); await wait("h2:has-text('بيان الربح')"); await p.waitForFunction(() => document.body.textContent.includes("وُزّعت خارج النظام"));
   ok("profit statement mentions the externally distributed profit without distributing it again", (await p.textContent("body")).includes("1,000"));
+  // collecting from the invoice page itself, with the same "no profit" option
+  const inv4 = await post("/api/sales-invoices", { customerId: cust.id, docDate: "2026-11-05", saleType: "CREDIT", currency: "IQD", deliveryMode: "WITH_INVOICE", discount: "0", lines: [{ productId: prod.id, uom: "قطعة", qty: "1", unitPrice: "9000", lineDiscount: "0" }] }); await post(`/api/sales-invoices/${inv4.id}/post`, {});
+  await p.goto(B + `/sales/${inv4.id}`); await wait("h2:has-text('تسجيل قبض على هذه الفاتورة')");
+  await p.selectOption(".card:has(h2:has-text('تسجيل قبض')) select", { index: 1 }); await p.fill(".card:has(h2:has-text('تسجيل قبض')) input[inputmode=decimal] >> nth=0", "8000");
+  await p.click("label:has-text('بدون أرباح') input"); await p.fill(".card:has(h2:has-text('تسجيل قبض')) .row >> nth=1 >> input >> nth=0", "1000"); await p.fill(".card:has(h2:has-text('تسجيل قبض')) .row >> nth=1 >> input >> nth=1", "ربح سُلّم للشركاء");
+  await p.click("button.primary:has-text('قبض')"); await p.waitForFunction(() => document.body.textContent.includes("ربح موزَّع خارج النظام") && document.querySelector(".msg.ok"));
+  const g4 = await (await ctx.request.get(B + `/api/sales-invoices/${inv4.id}`)).json();
+  ok("collecting from the invoice page with «بدون أرباح»: 8,000 cash + 1,000 outside closes the invoice", Number(g4.collected) === 8000 && Number(g4.external) === 1000 && Number(g4.outstanding) === 0);
   // edit and delete a POSTED invoice from its page: same number, no reversal shown
   const inv3 = await post("/api/sales-invoices", { customerId: cust.id, docDate: "2026-11-05", saleType: "CREDIT", currency: "IQD", deliveryMode: "WITH_INVOICE", discount: "0", lines: [{ productId: prod.id, uom: "قطعة", qty: "1", unitPrice: "5000", lineDiscount: "0" }] }); const posted3 = await post(`/api/sales-invoices/${inv3.id}/post`, {});
   await p.goto(B + `/sales/${inv3.id}`); await wait("button:has-text('تعديل الفاتورة')");
