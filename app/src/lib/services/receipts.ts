@@ -220,16 +220,17 @@ export async function getReceipt(tx: Tx, id: string) {
       r.amount::text AS amount, r.notes, r.status FROM customer_receipts r JOIN contacts c ON c.id = r.customer_id LEFT JOIN cash_accounts ca ON ca.id = r.cash_account_id WHERE r.id = ${id}`;
   if (!r) throw notFound();
   // Per invoice: its value, what this receipt pays, what has been paid up to and including this receipt, and what is STILL owed after it (returns applied to the receivable are deducted).
-  // "amount" is the CASH collected by this receipt; "paidToDate" counts everything settled on the invoice (cash + profit distributed outside), so the receipt prints the collected amount only.
-  const rows = await tx`SELECT si.doc_no AS "invoiceNo", si.net::text AS "invoiceNet", sum(CASE WHEN a.external THEN 0 ELSE a.amount END)::text AS amount,
+  // The printed receipt shows the FULL settled amount (cash + profit distributed outside), exactly like the invoice; the internal reports keep the split (cash vs external).
+  const rows = await tx`SELECT si.doc_no AS "invoiceNo", si.net::text AS "invoiceNet", sum(a.amount)::text AS amount, sum(CASE WHEN a.external THEN a.amount ELSE 0 END)::text AS external,
       (COALESCE((SELECT sum(a2.amount) FROM receipt_allocations a2 JOIN customer_receipts c2 ON c2.id = a2.receipt_id
                  WHERE a2.invoice_id = si.id AND c2.status = 'POSTED' AND c2.id <> ${id}
                    AND c2.posted_at <= COALESCE((SELECT posted_at FROM customer_receipts WHERE id = ${id}), 'infinity'::timestamptz)), 0) + sum(a.amount))::text AS "paidToDate",
       COALESCE((SELECT sum(applied_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0)::text AS returned
     FROM receipt_allocations a JOIN sales_invoices si ON si.id = a.invoice_id WHERE a.receipt_id = ${id} GROUP BY si.id, si.doc_no, si.net, si.doc_date ORDER BY si.doc_date, si.doc_no`;
   const allocations = rows.map((x) => { const rem = Decimal.max(d(x.invoiceNet as string).minus(x.paidToDate as string).minus(x.returned as string), 0);
-    return { invoiceNo: x.invoiceNo as string, invoiceNet: x.invoiceNet as string, amount: x.amount as string, paidToDate: x.paidToDate as string, returned: x.returned as string, remaining: rem.toString(), state: rem.lte(0) ? "PAID" : "PARTIAL" }; });
-  return { ...r, allocations };
+    return { invoiceNo: x.invoiceNo as string, invoiceNet: x.invoiceNet as string, amount: x.amount as string, external: x.external as string, paidToDate: x.paidToDate as string, returned: x.returned as string, remaining: rem.toString(), state: rem.lte(0) ? "PAID" : "PARTIAL" }; });
+  const external = allocations.reduce((s, a) => s.plus(a.external), d(0));
+  return { ...r, cashAmount: r.amount, external: external.toString(), total: d(r.amount as string).plus(external).toString(), allocations };
 }
 export async function getCashTransfer(tx: Tx, id: string) {
   const [t] = await tx`SELECT t.id, t.doc_no AS "docNo", t.draft_ref AS "draftRef", t.doc_date::text AS "docDate", f.name AS "from", o.name AS "to", t.currency, t.amount::text AS amount, t.notes, t.status

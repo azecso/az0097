@@ -33,9 +33,10 @@ describe("invoice 900 (cost 800): 800 collected in cash, 100 profit was distribu
     const o = await ov(); expect(o.collectedProfit).toBe("100"); expect(o.newlyEligible).toBe("0"); expect(o.distributable).toBe("0");
     expect(o.externalDistributed).toBe("100"); expect(o.people.map((p: any) => p.externalDistributed)).toEqual(["50", "50"]);
   });
-  it("the printed receipt shows the cash collected (800) while the invoice is settled in full", async () => {
+  it("the printed receipt shows the FULL amount (900, like the invoice); the split stays available for the reports", async () => {
     const g = (await w.api(w.owner, w.R.receiptId.GET, { params: { id: rc } })).body;
-    expect(g.amount).toBe("800.0000"); expect(g.allocations).toHaveLength(1); expect(g.allocations[0]).toMatchObject({ invoiceNet: "900.0000", amount: "800.0000", paidToDate: "900.0000", remaining: "0", state: "PAID" });
+    expect(g).toMatchObject({ total: "900", cashAmount: "800.0000", external: "100" }); expect(g.allocations).toHaveLength(1);
+    expect(g.allocations[0]).toMatchObject({ invoiceNet: "900.0000", amount: "900.0000", paidToDate: "900.0000", remaining: "0", state: "PAID" });
   });
   it("reversing the receipt restores everything: invoice open again, cash back, nothing external", async () => {
     expect((await w.api(w.owner, w.R.receiptReverse, { method: "POST", params: { id: rc }, body: { reason: "اختبار" } })).status).toBe(200);
