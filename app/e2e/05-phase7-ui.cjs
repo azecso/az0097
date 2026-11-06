@@ -81,7 +81,7 @@ let P; const BASE = process.env.E2E_BASE || "http://localhost:3100";
   await p.screenshot({ path: "mobile-purchases.png", fullPage: true });
   await p.click("button.tabmore"); await p.waitForSelector("#phone-menu a:has-text('التقارير')");
   const links = await p.$$eval("#phone-menu a", (a) => a.map((x) => x.textContent));
-  ok("phone menu lists every section the user may open (reports, expenses, partners, inventory...)", ["التقارير", "المصاريف", "المخزون", "الشراكة والأرباح", "المحاسبة"].every((t) => links.includes(t)));
+  ok("phone menu lists every section the user may open (reports, expenses, partners, inventory...)", ["التقارير", "المصاريف", "المخزون", "الشراكة والتسويات", "المحاسبة"].every((t) => links.includes(t)));
   await p.screenshot({ path: "mobile-menu.png" });
   await p.click("#phone-menu a:has-text('التقارير')"); await p.waitForURL(/\/reports/); await p.waitForSelector("h1:has-text('التقارير')");
   ok("choosing a section navigates and closes the menu", (await p.$$("#phone-menu")).length === 0);

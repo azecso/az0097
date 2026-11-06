@@ -2,9 +2,9 @@ import type { Tx } from "../db";
 import { notFound } from "../errors";
 
 /** Read models for the printable documents that have no dedicated screen-detail API (returns, expenses, stock transfers, capital, settlements). */
-export const PRINT_KINDS = ["sales-return", "purchase-return", "expense", "stock-transfer", "capital", "settlement"] as const;
+export const PRINT_KINDS = ["sales-return", "purchase-return", "expense", "stock-transfer", "capital", "settlement", "profit-payout"] as const;
 export type PrintKind = (typeof PRINT_KINDS)[number];
-export const PRINT_PERM: Record<PrintKind, string> = { "sales-return": "sales", "purchase-return": "purchase", expense: "expense", "stock-transfer": "stock_transfer", capital: "capital", settlement: "profit_settlement" };
+export const PRINT_PERM: Record<PrintKind, string> = { "sales-return": "sales", "purchase-return": "purchase", expense: "expense", "stock-transfer": "stock_transfer", capital: "capital", settlement: "profit_settlement", "profit-payout": "profit_payout" };
 
 export async function getPrintDoc(tx: Tx, kind: PrintKind, id: string): Promise<Record<string, any>> {
   if (kind === "sales-return") {
@@ -37,6 +37,11 @@ export async function getPrintDoc(tx: Tx, kind: PrintKind, id: string): Promise<
     const [h] = await tx`SELECT t.doc_no AS "docNo", t.draft_ref AS "draftRef", t.doc_date::text AS "docDate", t.kind, t.currency, t.amount::text AS amount, t.reason, t.status, pa.name AS partner, ca.name AS "cashAccount",
         ru.display_name AS "requestedBy", au.display_name AS "approvedBy", t.rejected_reason AS "rejectedReason"
         FROM capital_transactions t JOIN partners pa ON pa.id = t.partner_id JOIN cash_accounts ca ON ca.id = t.cash_account_id JOIN users ru ON ru.id = t.requested_by LEFT JOIN users au ON au.id = t.approved_by WHERE t.id = ${id}`;
+    if (!h) throw notFound(); return h;
+  }
+  if (kind === "profit-payout") {
+    const [h] = await tx`SELECT po.doc_no AS "docNo", po.doc_date::text AS "docDate", pa.name AS partner, pa.kind AS "partnerKind", po.amount::text AS amount, po.advances_deducted::text AS advances, ca.name AS "cashAccount", s.doc_no AS "settlementNo", po.status, u.display_name AS "paidBy"
+      FROM profit_payouts po JOIN partners pa ON pa.id = po.partner_id JOIN profit_settlements s ON s.id = po.settlement_id LEFT JOIN cash_accounts ca ON ca.id = po.cash_account_id LEFT JOIN users u ON u.id = po.paid_by WHERE po.id = ${id}`;
     if (!h) throw notFound(); return h;
   }
   const [h] = await tx`SELECT s.doc_no AS "docNo", s.draft_ref AS "draftRef", s.period_start::text AS "periodStart", s.period_end::text AS "periodEnd", s.eligible_profit::text AS eligible, s.deductions::text AS deductions, s.adjustments::text AS adjustments,

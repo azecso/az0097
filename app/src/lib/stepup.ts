@@ -19,3 +19,9 @@ export async function requireStepUp(tx: Tx, who: Principal, code: string | null 
   const [ok] = await tx`SELECT auth_totp_use(${who.userId}, ${step}) AS ok`;
   if (!ok!.ok) throw new AppError(403, "TOTP_REPLAYED", "الرمز مستخدم مسبقاً؛ انتظر الرمز التالي");
 }
+
+/** Company switch (default OFF): ask for the owner's TOTP code when approving/paying profit settlements. Capital and period re-opening always require it. */
+export async function profitStepUpRequired(tx: Tx) {
+  const [c] = await tx`SELECT settings->>'profitStepUp' AS v FROM companies`;
+  return c?.v === "true";
+}

@@ -14,7 +14,7 @@ const NAV = [
   { href: "/inventory/products", label: "المواد", perm: "products:view" }, { href: "/inventory/stock", label: "المخزون", perm: "products:view" },
   { href: "/inventory/transfers", label: "تحويل المخزون", perm: "stock_transfer:view" }, { href: "/inventory/counts", label: "الجرد", perm: "inventory_count:view" },
   { href: "/expenses", label: "المصاريف", perm: "expense:view" }, { href: "/payroll", label: "الرواتب", perm: "payroll:view" }, { href: "/reports", label: "التقارير", perm: "report:view" }, { href: "/capital/returns", label: "إرجاع رأس المال", perm: "capital:view" }, { href: "/capital", label: "رأس المال والسحوبات", perm: "capital:view" },
-  { href: "/partners", label: "الشراكة والأرباح", perm: "profit_settlement:view" },
+  { href: "/profits", label: "الأرباح والتوزيع", perm: "profit_settlement:view" }, { href: "/partners", label: "الشراكة والتسويات", perm: "profit_settlement:view" },
   { href: "/accounting", label: "المحاسبة", perm: "journal:view" }, { href: "/accounting/opening", label: "الأرصدة الافتتاحية", perm: "opening_balance:view" }, { href: "/accounting/periods", label: "إقفال الفترات", perm: "period_close:view" },
   { href: "/sync", label: "المزامنة والعمل أوفلاين" }, { href: "/settings/company", label: "الشركة" }, { href: "/settings/fx", label: "أسعار الصرف", perm: "fx_rate:view" },
   { href: "/settings/users", label: "المستخدمون والصلاحيات", owner: true }, { href: "/settings/security", label: "الأمان (2FA)", owner: true }, { href: "/settings/backup", label: "سلامة البيانات والنسخ", owner: true }, { href: "/settings/audit", label: "سجل التدقيق", perm: "audit:view" },

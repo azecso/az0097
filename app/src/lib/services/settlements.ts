@@ -6,7 +6,7 @@ import type { Principal } from "../authz";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
 import { d, split5050, toBase } from "../money";
 import { postJournal, reverseEntry, type JLine } from "../ledger";
-import { requireStepUp } from "../stepup";
+import { profitStepUpRequired, requireStepUp } from "../stepup";
 import { assertCashAvailable, distributableLiquidity } from "./cash";
 import { dateStr, draftRef, moneyStr, uuid, yearOf } from "./common";
 import { invoiceProfit } from "./sales";
@@ -80,7 +80,7 @@ export async function listSettlements(tx: Tx) {
 /** Owner approval: recomputes from the live books under a lock, freezes the lines (never reusable), books the distribution liability. */
 export async function approveSettlement(tx: Tx, who: Principal, actor: Actor, id: string, totp?: string | null) {
   if (!who.isOwner) throw forbidden("OWNER_ONLY");
-  await requireStepUp(tx, who, totp);
+  if (await profitStepUpRequired(tx)) await requireStepUp(tx, who, totp);
   await tx`SELECT pg_advisory_xact_lock(hashtext(${who.companyId + ":settlement"}))`;
   const [s] = await tx`SELECT * FROM profit_settlements WHERE id = ${id} FOR UPDATE`;
   if (!s) throw notFound();
@@ -104,7 +104,7 @@ export async function approveSettlement(tx: Tx, who: Principal, actor: Actor, id
 
 export async function reverseSettlement(tx: Tx, who: Principal, actor: Actor, id: string, reason: string, totp?: string | null) {
   if (!who.isOwner) throw forbidden("OWNER_ONLY");
-  await requireStepUp(tx, who, totp);
+  if (await profitStepUpRequired(tx)) await requireStepUp(tx, who, totp);
   await tx`SELECT pg_advisory_xact_lock(hashtext(${who.companyId + ":settlement"}))`;
   const [s] = await tx`SELECT * FROM profit_settlements WHERE id = ${id} FOR UPDATE`;
   if (!s) throw notFound();
@@ -128,7 +128,7 @@ export async function partnerAdvanceBalance(tx: Tx, partnerId: string) {
 /** Pays part (or all) of a partner's approved share. Never exceeds the share, the cash, or cash minus committed obligations. Replays are refused. */
 export async function payProfit(tx: Tx, who: Principal, actor: Actor, i: z.infer<typeof payoutSchema>) {
   if (!who.isOwner) throw forbidden("OWNER_ONLY");
-  await requireStepUp(tx, who, i.totp);
+  if (await profitStepUpRequired(tx)) await requireStepUp(tx, who, i.totp);
   const [s] = await tx`SELECT * FROM profit_settlements WHERE id = ${i.settlementId} FOR UPDATE`;
   if (!s || s.status !== "POSTED") throw conflict("SETTLEMENT_NOT_APPROVED");
   const partner = await partnerRow(tx, i.partnerKind);
@@ -159,7 +159,7 @@ export async function payProfit(tx: Tx, who: Principal, actor: Actor, i: z.infer
 
 export async function reversePayout(tx: Tx, who: Principal, actor: Actor, id: string, reason: string, totp?: string | null) {
   if (!who.isOwner) throw forbidden("OWNER_ONLY");
-  await requireStepUp(tx, who, totp);
+  if (await profitStepUpRequired(tx)) await requireStepUp(tx, who, totp);
   const [p] = await tx`SELECT * FROM profit_payouts WHERE id = ${id} FOR UPDATE`;
   if (!p) throw notFound();
   if (p.status !== "POSTED") throw conflict("NOT_POSTED");
