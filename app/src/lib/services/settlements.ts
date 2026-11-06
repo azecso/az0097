@@ -34,7 +34,8 @@ export async function computeSettlement(tx: Tx, i: z.infer<typeof settlementInpu
   for (const inv of invs) {
     const p = await invoiceProfit(tx, inv.id);
     const before = d((await tx`SELECT COALESCE(sum(l.newly_released), 0)::text AS v FROM profit_settlement_lines l JOIN profit_settlements s ON s.id = l.settlement_id WHERE l.invoice_id = ${inv.id} AND s.status = 'POSTED'`)[0]!.v);
-    const linked = d(p.linkedProfitBase), newly = linked.minus(before);
+    const ext = d((await tx`SELECT COALESCE(sum(a.amount), 0)::text AS v FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = ${inv.id} AND a.external AND cr.status = 'POSTED'`)[0]!.v);
+    const linked = d(p.linkedProfitBase), room = Decimal.max(linked.minus(before), 0), newly = linked.minus(before).minus(Decimal.min(ext, room));          // profit already distributed outside the system is never distributed again
     if (newly.isZero()) continue;
     lines.push({ invoiceId: inv.id, docNo: inv.doc_no, adjustedProfit: p.adjustedProfitBase, ratio: p.collectedRatio, linked: linked.toString(), before: before.toString(), newly: newly.toString(), after: linked.toString() });
     E = E.plus(newly);

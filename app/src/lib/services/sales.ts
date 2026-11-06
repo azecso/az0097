@@ -17,15 +17,16 @@ const dateOf = (v: unknown) => (v instanceof Date ? v.toISOString().slice(0, 10)
 // =========================== invoice financial position ===========================
 export async function invoiceFinancials(tx: Tx, invoiceId: string) {
   const [r] = await tx`SELECT si.net::text AS net, si.currency, si.sale_type,
-      COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED'), 0)::text AS collected,
+      COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED' AND NOT a.external), 0)::text AS collected,
+      COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED' AND a.external), 0)::text AS external,
       COALESCE((SELECT sum(value_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0)::text AS returned,
       COALESCE((SELECT sum(applied_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0)::text AS applied,
       COALESCE((SELECT sum(refund_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0)::text AS refunds
     FROM sales_invoices si WHERE si.id = ${invoiceId}`;
   if (!r) throw notFound();
-  const outstanding = Decimal.max(d(r.net).minus(r.collected).minus(r.applied), 0);
-  return { net: r.net as string, currency: r.currency as string, collected: r.collected as string, returned: r.returned as string, appliedToReceivable: r.applied as string,
-    cashRefunds: r.refunds as string, adjustedNet: d(r.net).minus(r.returned).toString(), netCollected: d(r.collected).minus(r.refunds).toString(), outstanding: outstanding.toString() };
+  const outstanding = Decimal.max(d(r.net).minus(r.collected).minus(r.external).minus(r.applied), 0);
+  return { net: r.net as string, currency: r.currency as string, collected: r.collected as string, external: r.external as string, returned: r.returned as string, appliedToReceivable: r.applied as string,
+    cashRefunds: r.refunds as string, adjustedNet: d(r.net).minus(r.returned).toString(), netCollected: d(r.collected).plus(r.external).minus(r.refunds).toString(), outstanding: outstanding.toString() };
 }
 
 /**

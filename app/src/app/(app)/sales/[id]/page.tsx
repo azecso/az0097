@@ -10,7 +10,7 @@ import { Attach } from "@/components/attach";
 
 interface Line { id: string; lineNo: number; productCode: string; productName: string; uom: string; qty: string; qtyBase: string; unitPrice: string; lineDiscount: string; lineTotal: string; delivered: string; returned: string }
 interface Doc { id: string; customerId: string; docNo: string | null; draftRef: string; docDate: string; customerName: string; saleType: string; currency: string; exchangeRate: string; gross: string; discount: string; net: string; netBase: string; status: string; deliveryMode: string; cashAccountId: string | null;
-  lines: Line[]; collected?: string; outstanding?: string; returned?: string; cogsBase?: string | null; profit?: { grossProfitBase: string; adjustedProfitBase: string; collectedRatio: string; linkedProfitBase: string } | null; terms: string | null }
+  lines: Line[]; collected?: string; external?: string; outstanding?: string; returned?: string; cogsBase?: string | null; profit?: { grossProfitBase: string; adjustedProfitBase: string; collectedRatio: string; linkedProfitBase: string } | null; terms: string | null }
 export default function InvoiceView() {
   const { id } = useParams<{ id: string }>(); const router = useRouter(); const me = useMe();
   const { data: d, reload, err } = useLoad<Doc | null>(`/api/sales-invoices/${id}`, null); const { msg, busy, run } = useAction(reload);
@@ -28,7 +28,7 @@ export default function InvoiceView() {
       {Number(d.discount) > 0 && <div><div className="label">الخصم</div><span className="num">{money(d.discount)}</span></div>}
       <div><div className="label">الصافي</div><strong className="num">{money(d.net)} {d.currency}</strong></div>
       {d.currency !== "IQD" && <div><div className="label">سعر الصرف المثبّت</div><span className="num">{money(d.exchangeRate)}</span></div>}
-      {d.outstanding !== undefined && <><div><div className="label">إجمالي المقبوض على هذه الفاتورة</div><span className="num">{money(d.collected)}</span></div><div><div className="label">المتبقي للقبض</div><strong className="num">{money(d.outstanding)} {d.currency}</strong></div></>}
+      {d.outstanding !== undefined && <><div><div className="label">إجمالي المقبوض على هذه الفاتورة</div><span className="num">{money(d.collected)}</span></div>{Number(d.external) > 0 && <div><div className="label">ربح موزَّع خارج النظام</div><span className="num">{money(d.external)}</span></div>}<div><div className="label">المتبقي للقبض</div><strong className="num">{money(d.outstanding)} {d.currency}</strong></div></>}
       {canProfit && d.profit && <><div><div className="label">إجمالي الربح</div><span className="num">{money(d.profit.grossProfitBase)} IQD</span></div>
         <div><div className="label">الربح المرتبط بالتحصيل (مؤشر)</div><span className="num">{money(d.profit.linkedProfitBase)} IQD</span></div></>}
     </div>

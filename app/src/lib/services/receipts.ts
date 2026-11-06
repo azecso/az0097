@@ -4,7 +4,7 @@ import type { Tx } from "../db";
 import { audit, type Actor } from "../audit";
 import type { Principal } from "../authz";
 import { badRequest, conflict, notFound } from "../errors";
-import { d, toBase } from "../money";
+import { d, split5050, toBase } from "../money";
 import { postJournal, reverseEntry, type JLine } from "../ledger";
 import { currencyCode, dateStr, draftRef, moneyStr, rateStr, resolveRate, uuid, yearOf } from "./common";
 import { invoiceFinancials } from "./sales";
@@ -21,10 +21,11 @@ export async function customerCredit(tx: Tx, customerId: string) {
 // =========================== receipts (سند قبض) ===========================
 export const receiptSchema = z.object({
   customerId: uuid, docDate: dateStr, kind: z.enum(["CASH", "CREDIT_APPLICATION"]).default("CASH"), cashAccountId: uuid.nullish(), currency: currencyCode, exchangeRate: rateStr.nullish(),
-  amount: moneyStr, notes: z.string().max(500).nullish(), allocations: z.array(z.object({ invoiceId: uuid, amount: moneyStr })).max(100).default([]),
+  amount: moneyStr, notes: z.string().max(500).nullish(),
+  allocations: z.array(z.object({ invoiceId: uuid, amount: moneyStr, externalAmount: moneyStr.default("0"), externalNote: z.string().max(300).nullish() })).max(100).default([]),
 });
 
-async function validate(tx: Tx, i: z.infer<typeof receiptSchema>) {
+async function validate(tx: Tx, i: z.infer<typeof receiptSchema>, who: Principal) {
   const amount = d(i.amount);
   if (amount.lte(0)) throw badRequest("INVALID_AMOUNT");
   const [c] = await tx`SELECT kind FROM contacts WHERE id = ${i.customerId}`;
@@ -39,7 +40,14 @@ async function validate(tx: Tx, i: z.infer<typeof receiptSchema>) {
     const [inv] = await tx`SELECT customer_id, status, currency FROM sales_invoices WHERE id = ${a.invoiceId}`;
     if (!inv || inv.customer_id !== i.customerId || inv.status !== "POSTED") throw badRequest("BAD_ALLOCATION", "التخصيص على فاتورة مرحّلة لنفس العميل فقط");
     if (inv.currency !== i.currency) throw badRequest("ALLOCATION_CURRENCY_MISMATCH", "عملة الفاتورة تخالف عملة السند");
-    if (d(a.amount).gt((await invoiceFinancials(tx, a.invoiceId)).outstanding)) throw conflict("OVER_ALLOCATION", "المبلغ المخصص يتجاوز المتبقي على الفاتورة");
+    const ext = d(a.externalAmount ?? "0");
+    if (ext.gt(0)) {                                              // profit already distributed outside the system: owner only, cash receipts in dinar only
+      if (!who.isOwner) throw badRequest("EXTERNAL_PROFIT_OWNER_ONLY", "تسجيل الربح الموزَّع خارج النظام للمالك فقط");
+      if (i.kind !== "CASH" || i.currency !== "IQD") throw badRequest("EXTERNAL_PROFIT_IQD_CASH_ONLY", "الربح الخارجي يُسجَّل في سند قبض نقدي بالدينار فقط");
+      if (!(a.externalNote ?? "").trim()) throw badRequest("EXTERNAL_PROFIT_NOTE_REQUIRED", "اكتب ملاحظة توضح الربح الموزَّع خارج النظام");
+    }
+    if (d(a.amount).lte(0) && ext.lte(0)) throw badRequest("EMPTY_ALLOCATION", "حدّد مبلغاً مستحصلاً أو ربحاً خارجياً للفاتورة");
+    if (d(a.amount).plus(ext).gt((await invoiceFinancials(tx, a.invoiceId)).outstanding)) throw conflict("OVER_ALLOCATION", "المبلغ المخصص (المستحصل + الخارجي) يتجاوز المتبقي على الفاتورة");
     alloc = alloc.plus(a.amount);
   }
   if (alloc.gt(amount)) throw badRequest("ALLOCATIONS_EXCEED_AMOUNT", "مجموع التخصيصات أكبر من المبلغ");
@@ -48,13 +56,16 @@ async function validate(tx: Tx, i: z.infer<typeof receiptSchema>) {
   }
 }
 
-async function writeAllocs(tx: Tx, companyId: string, id: string, allocs: { invoiceId: string; amount: string }[]) {
+async function writeAllocs(tx: Tx, companyId: string, id: string, allocs: { invoiceId: string; amount: string; externalAmount?: string; externalNote?: string | null }[]) {
   await tx`DELETE FROM receipt_allocations WHERE receipt_id = ${id}`;
-  for (const a of allocs) await tx`INSERT INTO receipt_allocations(company_id, receipt_id, invoice_id, amount) VALUES (${companyId}, ${id}, ${a.invoiceId}, ${a.amount})`;
+  for (const a of allocs) {
+    if (d(a.amount).gt(0)) await tx`INSERT INTO receipt_allocations(company_id, receipt_id, invoice_id, amount) VALUES (${companyId}, ${id}, ${a.invoiceId}, ${a.amount})`;
+    if (d(a.externalAmount ?? "0").gt(0)) await tx`INSERT INTO receipt_allocations(company_id, receipt_id, invoice_id, amount, external, note) VALUES (${companyId}, ${id}, ${a.invoiceId}, ${a.externalAmount!}, true, ${a.externalNote ?? null})`;
+  }
 }
 
 export async function createReceipt(tx: Tx, who: Principal, actor: Actor, i: z.infer<typeof receiptSchema>) {
-  await validate(tx, i);
+  await validate(tx, i, who);
   const rate = await resolveRate(tx, i.currency, i.docDate, i.exchangeRate ?? undefined);
   const [r] = await tx`INSERT INTO customer_receipts(company_id, draft_ref, doc_date, kind, customer_id, cash_account_id, currency, exchange_rate_snapshot, amount, notes, created_by)
     VALUES (${who.companyId}, ${draftRef()}, ${i.docDate}, ${i.kind}, ${i.customerId}, ${i.kind === "CASH" ? i.cashAccountId! : null}, ${i.currency}, ${rate}, ${i.amount}, ${i.notes ?? null}, ${who.userId}) RETURNING id, draft_ref AS "draftRef", version`;
@@ -85,9 +96,11 @@ export async function postReceipt(tx: Tx, who: Principal, actor: Actor, id: stri
   const [r] = await tx`SELECT * FROM customer_receipts WHERE id = ${id} FOR UPDATE`;
   if (!r) throw notFound();
   if (r.status !== "DRAFT") throw conflict("NOT_DRAFT");
-  const allocs = await tx`SELECT a.invoice_id, a.amount::text AS amount, si.exchange_rate_snapshot::text AS fx FROM receipt_allocations a JOIN sales_invoices si ON si.id = a.invoice_id WHERE a.receipt_id = ${id}`;
-  await validate(tx, { customerId: r.customer_id, docDate: dateOf(r.doc_date), kind: r.kind, cashAccountId: r.cash_account_id, currency: r.currency, amount: r.amount,
-    allocations: allocs.map((a) => ({ invoiceId: a.invoice_id, amount: a.amount })) } as z.infer<typeof receiptSchema>);
+  const allRows = await tx`SELECT a.invoice_id, a.amount::text AS amount, a.external, a.note, si.exchange_rate_snapshot::text AS fx FROM receipt_allocations a JOIN sales_invoices si ON si.id = a.invoice_id WHERE a.receipt_id = ${id}`;
+  const allocs = allRows.filter((a) => !a.external), extRows = allRows.filter((a) => a.external);
+  const byInv = new Map<string, { invoiceId: string; amount: string; externalAmount: string; externalNote: string | null }>();
+  for (const a of allRows) { const e = byInv.get(a.invoice_id as string) ?? { invoiceId: a.invoice_id as string, amount: "0", externalAmount: "0", externalNote: null }; if (a.external) { e.externalAmount = a.amount as string; e.externalNote = a.note as string | null; } else e.amount = a.amount as string; byInv.set(a.invoice_id as string, e); }
+  await validate(tx, { customerId: r.customer_id, docDate: dateOf(r.doc_date), kind: r.kind, cashAccountId: r.cash_account_id, currency: r.currency, amount: r.amount, allocations: [...byInv.values()] } as z.infer<typeof receiptSchema>, who);
   const date = dateOf(r.doc_date), fx = r.exchange_rate_snapshot as string, cur = r.currency as string;
   const docNo = (await tx`SELECT next_document_number(${who.companyId}, 'customer_receipt', ${yearOf(date)}) AS n`)[0]!.n as string;
   let arBase = d(0), allocated = d(0);
@@ -102,6 +115,13 @@ export async function postReceipt(tx: Tx, who: Principal, actor: Actor, id: stri
     if (creditBase.gt(0)) jl.push({ account: "2400", credit: creditBase, currency: cur, amountOrig: rest, fx, contactId: r.customer_id });
     if (fxDiff.gt(0)) jl.push({ account: "7100", credit: fxDiff, memo: "ربح فرق صرف محقق" });
     if (fxDiff.lt(0)) jl.push({ account: "7100", debit: fxDiff.abs(), memo: "خسارة فرق صرف محققة" });
+    const ext = extRows.reduce<Decimal>((s, a) => s.plus(a.amount as string), d(0));                              // profit already distributed outside: no cash, AR cleared, split 50/50 to the two partners
+    if (ext.gt(0)) {
+      const sh = split5050(ext, "IQD"); const [own] = await tx`SELECT id FROM partners WHERE kind = 'OWNER'`; const [par] = await tx`SELECT id FROM partners WHERE kind = 'PARTNER'`;
+      jl.push({ account: "1200", credit: ext, currency: cur, amountOrig: ext, fx: 1, contactId: r.customer_id, memo: "ربح موزَّع خارج النظام" });
+      if (sh.owner.gt(0)) jl.push({ account: "3500", debit: sh.owner, partnerId: own!.id, memo: "حصة المالك من ربح موزَّع خارج النظام" });
+      if (sh.partner.gt(0)) jl.push({ account: "3500", debit: sh.partner, partnerId: par!.id, memo: "حصة الشريك من ربح موزَّع خارج النظام" });
+    }
     await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id) VALUES (${who.companyId}, ${ca!.id}, ${r.amount}, ${cashBase.toString()}, 'customer_receipt', ${id})`;
   } else {
     if (arBase.gt(await customerCredit(tx, r.customer_id))) throw conflict("INSUFFICIENT_CREDIT", "الرصيد الدائن للعميل لا يكفي");
@@ -200,12 +220,13 @@ export async function getReceipt(tx: Tx, id: string) {
       r.amount::text AS amount, r.notes, r.status FROM customer_receipts r JOIN contacts c ON c.id = r.customer_id LEFT JOIN cash_accounts ca ON ca.id = r.cash_account_id WHERE r.id = ${id}`;
   if (!r) throw notFound();
   // Per invoice: its value, what this receipt pays, what has been paid up to and including this receipt, and what is STILL owed after it (returns applied to the receivable are deducted).
-  const rows = await tx`SELECT si.doc_no AS "invoiceNo", si.net::text AS "invoiceNet", a.amount::text AS amount,
+  // "amount" is the CASH collected by this receipt; "paidToDate" counts everything settled on the invoice (cash + profit distributed outside), so the receipt prints the collected amount only.
+  const rows = await tx`SELECT si.doc_no AS "invoiceNo", si.net::text AS "invoiceNet", sum(CASE WHEN a.external THEN 0 ELSE a.amount END)::text AS amount,
       (COALESCE((SELECT sum(a2.amount) FROM receipt_allocations a2 JOIN customer_receipts c2 ON c2.id = a2.receipt_id
                  WHERE a2.invoice_id = si.id AND c2.status = 'POSTED' AND c2.id <> ${id}
-                   AND c2.posted_at <= COALESCE((SELECT posted_at FROM customer_receipts WHERE id = ${id}), 'infinity'::timestamptz)), 0) + a.amount)::text AS "paidToDate",
+                   AND c2.posted_at <= COALESCE((SELECT posted_at FROM customer_receipts WHERE id = ${id}), 'infinity'::timestamptz)), 0) + sum(a.amount))::text AS "paidToDate",
       COALESCE((SELECT sum(applied_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0)::text AS returned
-    FROM receipt_allocations a JOIN sales_invoices si ON si.id = a.invoice_id WHERE a.receipt_id = ${id} ORDER BY si.doc_date, si.doc_no`;
+    FROM receipt_allocations a JOIN sales_invoices si ON si.id = a.invoice_id WHERE a.receipt_id = ${id} GROUP BY si.id, si.doc_no, si.net, si.doc_date ORDER BY si.doc_date, si.doc_no`;
   const allocations = rows.map((x) => { const rem = Decimal.max(d(x.invoiceNet as string).minus(x.paidToDate as string).minus(x.returned as string), 0);
     return { invoiceNo: x.invoiceNo as string, invoiceNet: x.invoiceNet as string, amount: x.amount as string, paidToDate: x.paidToDate as string, returned: x.returned as string, remaining: rem.toString(), state: rem.lte(0) ? "PAID" : "PARTIAL" }; });
   return { ...r, allocations };

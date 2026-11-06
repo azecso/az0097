@@ -1,20 +1,37 @@
 // Server-side A4 PDF: headless Chromium renders our own /print pages (real Arabic shaping, RTL, fonts) with the caller's session.
-import { existsSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AppError } from "./errors";
 
 let chain: Promise<unknown> = Promise.resolve();                         // one render at a time: Chromium is heavy on a small VPS
 export const PRINT_PATH = /^\/print\/[a-z0-9\-/]{1,120}(\?[A-Za-z0-9=&_\-.]{0,200})?$/;     // strictly our own print pages (no SSRF)
 
-function chromiumPath(): string {
-  for (const p of [process.env.CHROMIUM_PATH, "/usr/bin/chromium-browser", "/usr/bin/chromium", "/opt/pw-browsers/chromium-1243/chrome-linux64/chrome"]) if (p && existsSync(p)) return p;
-  throw new AppError(503, "PDF_UNAVAILABLE", "محرك PDF غير متوفر على الخادم (CHROMIUM_PATH)");
+const BASE_ARGS = ["--no-sandbox", "--disable-gpu", "--font-render-hinting=none"];
+/** System Chromium when present (Docker/VPS); otherwise the self-contained build from @sparticuz/chromium (works on plain Node hosts such as Render, no apt/Docker needed). */
+async function engine(): Promise<{ executablePath: string; args: string[] }> {
+  if (process.env.PDF_ENGINE !== "bundled")
+    for (const p of [process.env.CHROMIUM_PATH, "/usr/bin/chromium-browser", "/usr/bin/chromium", "/opt/pw-browsers/chromium-1243/chrome-linux64/chrome"]) if (p && existsSync(p)) return { executablePath: p, args: BASE_ARGS };
+  try {
+    const { default: Bundled } = await import("@sparticuz/chromium");
+    const executablePath = await Bundled.executablePath();
+    // Arabic-capable font for the footer template (it cannot use the page's web fonts): drop it where the bundled fontconfig looks.
+    const dest = process.env.FONTCONFIG_PATH ?? join(tmpdir(), "fonts"); mkdirSync(dest, { recursive: true });
+    const src = join(process.cwd(), "assets", "fonts");
+    if (existsSync(src)) for (const f of readdirSync(src)) if (/\.ttf$/i.test(f) && !existsSync(join(dest, f))) copyFileSync(join(src, f), join(dest, f));
+    return { executablePath, args: [...Bundled.args.filter((a) => !BASE_ARGS.includes(a)), ...BASE_ARGS] };
+  } catch (e) {
+    console.error(JSON.stringify({ level: "error", at: new Date().toISOString(), name: "PdfEngineMissing", message: String((e as Error)?.message ?? e).slice(0, 300) }));
+    throw new AppError(503, "PDF_UNAVAILABLE", "محرك PDF غير متوفر على الخادم");
+  }
 }
 
 export function renderPdf(origin: string, path: string, sessionCookie: string): Promise<Buffer> {
   if (!PRINT_PATH.test(path)) throw new AppError(400, "BAD_PATH", "مسار طباعة غير صالح");
   const run = async () => {
     const { chromium } = await import("playwright-core");
-    const browser = await chromium.launch({ executablePath: chromiumPath(), args: ["--no-sandbox", "--disable-gpu", "--font-render-hinting=none"] });
+    const eng = await engine();
+    const browser = await chromium.launch({ executablePath: eng.executablePath, args: eng.args });
     try {
       const ctx = await browser.newContext({ locale: "ar", viewport: { width: 1000, height: 1400 } });
       await ctx.addCookies([{ name: "erp_session", value: sessionCookie, url: origin, httpOnly: true, sameSite: "Lax" }]);

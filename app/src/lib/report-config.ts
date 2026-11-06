@@ -1,17 +1,18 @@
 /** Shared by the on-screen reports page and its A4 print page. Money columns are formatted, never summed in floats. */
 export type ColDef = { key: string; label: string; kind?: "money" | "qty" | "text" };
-export type RType = "sales" | "purchases" | "debtors" | "creditors" | "movement" | "customers";
-export const TYPE_TITLE: Record<RType, string> = { sales: "تقرير المبيعات", purchases: "تقرير المشتريات", customers: "ملخص العملاء (المبيعات والمسدد والمتبقي)", debtors: "المدينون (ذمم العملاء)", creditors: "الدائنون (ذمم الموردين)", movement: "حركة صنف" };
+export type RType = "sales" | "purchases" | "debtors" | "creditors" | "movement" | "customers" | "external";
+export const TYPE_TITLE: Record<RType, string> = { sales: "تقرير المبيعات", purchases: "تقرير المشتريات", customers: "ملخص العملاء (المبيعات والمسدد والمتبقي)", external: "الأرباح الموزَّعة خارج النظام", debtors: "المدينون (ذمم العملاء)", creditors: "الدائنون (ذمم الموردين)", movement: "حركة صنف" };
 export const GROUP_LABEL: Record<string, string> = { invoice: "تفصيلي (فاتورة بفاتورة)", party: "حسب الجهة", product: "حسب المادة", month: "حسب الشهر" };
 export function apiOf(t: RType, qs: string) {
   const p = new URLSearchParams(qs);
   if (t === "sales" || t === "purchases") return `/api/reports/${t}?${qs}`;
   if (t === "movement") return `/api/reports/product-movement?${qs}`;
   if (t === "customers") return `/api/reports/customers-summary?${qs}`;
+  if (t === "external") return `/api/reports/external-profits?${qs}`;
   p.set("side", t); return `/api/reports/balances?${p}`;
 }
 export function exportOf(t: RType, qs: string) {
-  const kind = { customers: "customers-summary", sales: "sales-report", purchases: "purchases-report", debtors: "debtors", creditors: "creditors", movement: "product-movement" }[t];
+  const kind = { external: "external-profits", customers: "customers-summary", sales: "sales-report", purchases: "purchases-report", debtors: "debtors", creditors: "creditors", movement: "product-movement" }[t];
   return `/api/export/${kind}?${qs}`;
 }
 export function colsOf(t: RType, group: string, summary: boolean): ColDef[] {
@@ -23,6 +24,7 @@ export function colsOf(t: RType, group: string, summary: boolean): ColDef[] {
     return t === "sales" ? [...head, { key: "gross", label: "المبيعات", kind: "money" }, { key: "returns", label: "المرتجعات", kind: "money" }, { key: "net", label: "الصافي", kind: "money" }, { key: "cost", label: "التكلفة", kind: "money" }, { key: "profit", label: "الربح", kind: "money" }, { key: "margin", label: "الهامش %", kind: "qty" }]
       : [...head, { key: "goods", label: "قيمة البضاعة", kind: "money" }, { key: "charges", label: "مصاريف الشراء", kind: "money" }, { key: "returns", label: "المرتجعات", kind: "money" }, { key: "net", label: "الصافي", kind: "money" }];
   }
+  if (t === "external") return [{ key: "date", label: "التاريخ" }, { key: "receiptNo", label: "سند القبض" }, { key: "customer", label: "العميل" }, { key: "invoiceNo", label: "الفاتورة" }, { key: "invoiceNet", label: "قيمة الفاتورة", kind: "money" }, { key: "cash", label: "المستحصل نقداً", kind: "money" }, { key: "external", label: "ربح موزَّع خارج النظام", kind: "money" }, { key: "note", label: "ملاحظة" }];
   if (t === "customers") return [{ key: "party", label: "العميل" }, { key: "currency", label: "العملة" }, { key: "invoiceDate", label: "تاريخ الفاتورة" }, { key: "invoices", label: "عدد الفواتير", kind: "qty" }, { key: "sales", label: "إجمالي المبيعات", kind: "money" }, { key: "returns", label: "المرتجعات", kind: "money" }, { key: "paid", label: "المسدَّد", kind: "money" }, { key: "remaining", label: "المتبقي", kind: "money" }, { key: "status", label: "الحالة" }];
   if (t === "movement") return [{ key: "movedAt", label: "التاريخ" }, { key: "type", label: "الحركة" }, { key: "location", label: "الموقع" }, { key: "qty", label: "الكمية", kind: "qty" }, { key: "cost", label: "التكلفة", kind: "money" }, { key: "balance", label: "الرصيد", kind: "qty" }];
   return summary ? [{ key: "party", label: "الجهة" }, { key: "currency", label: "العملة" }, { key: "docs", label: "عدد الفواتير", kind: "qty" }, { key: "outstanding", label: "المتبقي", kind: "money" }, { key: "maxOverdue", label: "أقصى تأخر (يوم)", kind: "qty" }]

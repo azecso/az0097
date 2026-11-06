@@ -7,7 +7,7 @@ const csp = [
 export default {
   output: "standalone",
   poweredByHeader: false,
-  serverExternalPackages: ["postgres", "@node-rs/argon2", "exceljs", "playwright-core"],
+  serverExternalPackages: ["postgres", "@node-rs/argon2", "exceljs", "playwright-core", "@sparticuz/chromium"],
   async headers() {
     return [{ source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }, { key: "Service-Worker-Allowed", value: "/" }] }, { source: "/(.*)", headers: [
       { key: "Content-Security-Policy", value: csp },

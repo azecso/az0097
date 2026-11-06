@@ -35,6 +35,17 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   ok("profit payout voucher prints (official sheet, amount 60,000, voucher number)", pdf.slice(0, 5).toString() === "%PDF-" && txt.includes("60,000") && /PY-\d{4}-\d{6}/.test(txt) && /owner/.test(txt));
   const tb = await (await ctx.request.get(B + "/api/reports/trial-balance")).json(); const c3100 = tb.rows.find((r) => r.code === "3100");
   ok("ledger balanced and capital account unchanged by expenses and withdrawals", tb.balanced === true && Number(c3100.credit) - Number(c3100.debit) === 10000000);
+  // invoice 9,000 (cost 7,000): 8,000 collected in cash, 1,000 of the profit was already distributed outside the system
+  const inv2 = await post("/api/sales-invoices", { customerId: cust.id, docDate: "2026-11-05", saleType: "CREDIT", currency: "IQD", deliveryMode: "WITH_INVOICE", discount: "0", lines: [{ productId: prod.id, uom: "قطعة", qty: "1", unitPrice: "9000", lineDiscount: "0" }] }); await post(`/api/sales-invoices/${inv2.id}/post`, {});
+  await p.goto(B + "/sales/receipts"); await wait("#c"); await p.selectOption("#c", { label: "عميل الأرباح" }); await p.fill("#a", "8000");
+  await p.waitForSelector("td:has-text('بدون أرباح')"); await p.click("label:has-text('بدون أرباح') input"); await p.fill("input[aria-label='مبلغ الربح الموزَّع خارج النظام']", "1000"); await p.fill("input[aria-label='ملاحظة']", "ربح سُلّم للشريكين مباشرة");
+  ok("the box shows what is settled and what remains (0 after 8,000 cash + 1,000 outside)", (await p.textContent("small:has-text('الباقي بعد السند')")).includes("0"));
+  await p.click("button.primary:has-text('حفظ كمسودة')"); await wait(".msg.ok"); await p.click("td button.primary:has-text('ترحيل')"); await p.waitForFunction(() => document.querySelector(".msg.ok")?.textContent.includes("تم الترحيل"));
+  const g2 = await (await ctx.request.get(B + `/api/sales-invoices/${inv2.id}`)).json();
+  ok("invoice closed: 8,000 cash + 1,000 distributed outside, nothing outstanding", Number(g2.collected) === 8000 && Number(g2.external) === 1000 && Number(g2.outstanding) === 0);
+  const er = await (await ctx.request.get(B + "/api/reports/external-profits")).json(); ok("report lists it with collected and external amounts", er.rows.length === 1 && Number(er.rows[0].cash) === 8000 && Number(er.rows[0].external) === 1000);
+  await p.goto(B + "/profits"); await wait("h2:has-text('بيان الربح')"); await p.waitForFunction(() => document.body.textContent.includes("وُزّعت خارج النظام"));
+  ok("profit statement mentions the externally distributed profit without distributing it again", (await p.textContent("body")).includes("1,000"));
   await p.setViewportSize({ width: 390, height: 800 }); await p.goto(B + "/profits"); await wait("h1"); ok("mobile /profits: no horizontal scroll", await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   ok("no console/page errors", errs.length === 0); if (errs.length) out.push("ERRORS: " + errs.slice(0, 4).join(" | "));
   console.log(out.join("\n")); await b.close();

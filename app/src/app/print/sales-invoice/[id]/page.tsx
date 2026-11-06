@@ -1,12 +1,13 @@
 "use client";
 import { useParams } from "next/navigation";
+import Decimal from "decimal.js";
 import { tafqeet } from "@/lib/tafqeet";
 import { Loading, M, usePrint } from "@/components/print";
 import { OfficialSheet, useWho } from "@/components/official-sheet";
 
 interface Inv { docNo: string | null; draftRef: string; docDate: string; dueDate: string | null; customerName: string; customerPhones: string[] | null; customerAddress: string | null;
   saleType: string; currency: string; exchangeRate: string; gross: string; discount: string; net: string; terms: string | null; notes: string | null; status: string;
-  collected?: string; appliedToReceivable?: string; outstanding?: string;
+  collected?: string; external?: string; appliedToReceivable?: string; outstanding?: string;
   lines: { lineNo: number; productCode: string; productName: string; uom: string; qty: string; unitPrice: string; lineDiscount: string; lineTotal: string }[] }
 
 export default function PrintInvoice() {
@@ -28,7 +29,7 @@ export default function PrintInvoice() {
       <table className="sum"><tbody>
         {Number(d.discount) > 0 && <><tr><td>الإجمالي قبل الخصم</td><td><M v={d.gross} /></td></tr><tr><td>الخصم</td><td><M v={d.discount} /></td></tr></>}
         <tr className="net"><td>صافي الفاتورة ({d.currency})</td><td><M v={d.net} /></td></tr>
-        {posted && <><tr><td>المدفوع</td><td><M v={d.collected} /></td></tr>{Number(d.appliedToReceivable) > 0 && <tr><td>مرتجعات / إشعارات دائنة</td><td><M v={d.appliedToReceivable} /></td></tr>}
+        {posted && <><tr><td>المدفوع</td><td><M v={new Decimal(d.collected ?? 0).plus(d.external ?? 0).toString()} /></td></tr>{Number(d.appliedToReceivable) > 0 && <tr><td>مرتجعات / إشعارات دائنة</td><td><M v={d.appliedToReceivable} /></td></tr>}
           <tr className="due"><td>المتبقي</td><td><M v={d.outstanding} /></td></tr></>}
       </tbody></table></div>}>
     <table className="items"><thead><tr><th style={{ width: "6%" }}>#</th><th>اسم الصنف</th><th style={{ width: "9%" }}>الوحدة</th><th style={{ width: "10%" }}>الكمية</th><th style={{ width: "15%" }}>سعر الوحدة</th>{hasDisc && <th style={{ width: "11%" }}>الخصم</th>}<th style={{ width: "16%" }}>الإجمالي</th></tr></thead>

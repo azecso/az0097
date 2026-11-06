@@ -43,16 +43,18 @@ export async function profitOverview(tx: Tx) {
     const [r] = await tx`SELECT
         COALESCE((SELECT sum(sh.share_amount) FROM profit_settlement_shares sh JOIN profit_settlements s ON s.id = sh.settlement_id WHERE sh.partner_id = ${p.id} AND s.status = 'POSTED'), 0)::text AS approved,
         COALESCE((SELECT sum(po.amount) FROM profit_payouts po WHERE po.partner_id = ${p.id} AND po.status = 'POSTED'), 0)::text AS paid,
-        COALESCE((SELECT sum(po.advances_deducted) FROM profit_payouts po WHERE po.partner_id = ${p.id} AND po.status = 'POSTED'), 0)::text AS adv`;
+        COALESCE((SELECT sum(po.advances_deducted) FROM profit_payouts po WHERE po.partner_id = ${p.id} AND po.status = 'POSTED'), 0)::text AS adv,
+        COALESCE((SELECT sum(jl.debit_base - jl.credit_base) FROM journal_lines jl JOIN accounts a ON a.id = jl.account_id WHERE a.code = '3500' AND jl.partner_id = ${p.id}), 0)::text AS ext`;
     const pending = d(p.kind === "OWNER" ? live.ownerShare : live.partnerShare);
     const remainingApproved = d(r!.approved).minus(r!.paid);
-    people.push({ kind: p.kind as string, name: p.name as string, approved: d(r!.approved as string).toString(), paid: d(r!.paid as string).toString(), advancesDeducted: d(r!.adv as string).toString(), remainingApproved: remainingApproved.toString(), pending: pending.toString(), available: remainingApproved.plus(pending).toString() });
+    people.push({ kind: p.kind as string, name: p.name as string, approved: d(r!.approved as string).toString(), paid: d(r!.paid as string).toString(), advancesDeducted: d(r!.adv as string).toString(), externalDistributed: d(r!.ext as string).toString(), remainingApproved: remainingApproved.toString(), pending: pending.toString(), available: remainingApproved.plus(pending).toString() });
   }
   const liq = await distributableLiquidity(tx);
   return {
     period: { from: periodStart === "2000-01-01" ? null : periodStart, to: periodEnd },
-    invoicedProfit: invoiced, collectedProfit: released.plus(live.eligibleProfit).toString(), releasedBefore: released.toString(), newlyEligible: live.eligibleProfit,
+    invoicedProfit: invoiced, collectedProfit: released.plus(live.eligibleProfit).plus(people.reduce((x, p) => x.plus(p.externalDistributed), d(0))).toString(), releasedBefore: released.toString(), newlyEligible: live.eligibleProfit,
     expenses: { total: live.deductions, byAccount, other: other.toString() }, lossCarriedIn: live.lossCarriedIn, lossCovered: live.lossCovered, netProfit: live.periodResult, distributable: live.distributable, lossCarriedOut: live.lossCarriedOut,
+    externalDistributed: people.reduce((s, p) => s.plus(p.externalDistributed), d(0)).toString(),
     shares: { owner: live.ownerShare, partner: live.partnerShare }, people, liquidity: { cash: liq.cash.toString(), committed: liq.committed.toString(), available: liq.available.toString() },
     capital: d((await tx`SELECT COALESCE(sum(jl.credit_base - jl.debit_base), 0)::text AS v FROM journal_lines jl JOIN accounts a ON a.id = jl.account_id WHERE a.code = '3100'`)[0]!.v as string).toString(),
     payouts: await listPayouts(tx),

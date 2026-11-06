@@ -7,7 +7,7 @@ import { partnerStatement } from "./settlements";
 import { listExpenses } from "./expenses";
 import { listInvoices } from "./sales";
 import { listPurchases } from "./purchases";
-import { customersSummary, balancesReport, productMovement, purchasesReport, reportQuery, salesReport } from "./analytics";
+import { customersSummary, externalProfitReport, balancesReport, productMovement, purchasesReport, reportQuery, salesReport } from "./analytics";
 import { listCapitalReturns } from "./capital-returns";
 
 type Col = { header: string; key: string; width?: number; kind?: "money" | "qty" | "text" };
@@ -31,7 +31,7 @@ function addSheet(wb: ExcelJS.Workbook, title: string, cols: Col[], rows: Record
   return ws;
 }
 
-export const EXPORT_KINDS = ["stock", "trial-balance", "receivables", "payables", "customer-statement", "supplier-statement", "partner-statement", "sales", "purchases", "expenses", "journal", "cash", "sales-report", "purchases-report", "debtors", "creditors", "customers-summary", "product-movement", "capital-returns"] as const;
+export const EXPORT_KINDS = ["stock", "trial-balance", "receivables", "payables", "customer-statement", "supplier-statement", "partner-statement", "sales", "purchases", "expenses", "journal", "cash", "sales-report", "purchases-report", "debtors", "creditors", "customers-summary", "external-profits", "product-movement", "capital-returns"] as const;
 export type ExportKind = (typeof EXPORT_KINDS)[number];
 
 export async function buildExport(tx: Tx, kind: ExportKind, id?: string | null, qs: URLSearchParams = new URLSearchParams()): Promise<{ filename: string; buffer: Buffer }> {
@@ -68,6 +68,9 @@ export async function buildExport(tx: Tx, kind: ExportKind, id?: string | null, 
     const r = await balancesReport(tx, kind, { partyId: qs.get("partyId") || undefined, overdueOnly: qs.get("overdue") === "1", summary: qs.get("summary") === "1" });
     if (r.mode === "summary") addSheet(wb, kind === "debtors" ? "المدينون" : "الدائنون", [{ header: "الجهة", key: "party", width: 28 }, { header: "العملة", key: "currency" }, { header: "عدد الفواتير", key: "docs", kind: "qty" }, { header: "المتبقي", key: "outstanding", kind: "money" }, { header: "أقصى تأخر (يوم)", key: "maxOverdue", kind: "qty" }], r.rows as never);
     else addSheet(wb, kind === "debtors" ? "المدينون" : "الدائنون", [{ header: "الفاتورة", key: "docNo" }, { header: "الجهة", key: "party", width: 28 }, { header: "العملة", key: "currency" }, { header: "الإجمالي", key: "total", kind: "money" }, { header: "المقبوض/المسدَّد", key: "paid", kind: "money" }, { header: "المتبقي", key: "outstanding", kind: "money" }, { header: "الاستحقاق", key: "dueDate" }, { header: "أيام التأخر", key: "daysOverdue", kind: "qty" }], r.rows as never);
+  } else if (kind === "external-profits") {
+    const r = await externalProfitReport(tx, { from: qs.get("from") || undefined, to: qs.get("to") || undefined, partyId: qs.get("partyId") || undefined });
+    addSheet(wb, "أرباح خارج النظام", [{ header: "التاريخ", key: "date" }, { header: "سند القبض", key: "receiptNo" }, { header: "العميل", key: "customer", width: 26 }, { header: "الفاتورة", key: "invoiceNo" }, { header: "قيمة الفاتورة", key: "invoiceNet", kind: "money" }, { header: "المستحصل نقداً", key: "cash", kind: "money" }, { header: "ربح موزَّع خارج النظام", key: "external", kind: "money" }, { header: "ملاحظة", key: "note", width: 30 }], r.rows as never, ["invoiceNet", "cash", "external"]);
   } else if (kind === "customers-summary") {
     const r = await customersSummary(tx, qs.get("partyId") || undefined);
     addSheet(wb, "ملخص العملاء", [{ header: "العميل", key: "party", width: 28 }, { header: "العملة", key: "currency" }, { header: "تاريخ الفاتورة", key: "invoiceDate", width: 24 }, { header: "عدد الفواتير", key: "invoices", kind: "qty" }, { header: "إجمالي المبيعات", key: "sales", kind: "money" }, { header: "المرتجعات", key: "returns", kind: "money" }, { header: "المسدَّد", key: "paid", kind: "money" }, { header: "المتبقي", key: "remaining", kind: "money" }], r.rows as never, ["sales", "returns", "paid", "remaining"]);

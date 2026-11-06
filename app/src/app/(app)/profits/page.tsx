@@ -6,12 +6,12 @@ import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { MsgBox, PrintLink, useAction, useLoad } from "@/components/ui";
 
-interface Person { kind: string; name: string; approved: string; paid: string; advancesDeducted: string; remainingApproved: string; pending: string; available: string }
+interface Person { kind: string; name: string; externalDistributed: string; approved: string; paid: string; advancesDeducted: string; remainingApproved: string; pending: string; available: string }
 interface Payout { id: string; docNo: string; docDate: string; partner: string; partnerKind: string; amount: string; advancesDeducted: string; status: string; settlementNo?: string }
 interface Ov { period: { from: string | null; to: string }; invoicedProfit: string; collectedProfit: string; releasedBefore: string; newlyEligible: string; expenses: { total: string; byAccount: { code: string; name: string; amount: string }[]; other: string };
-  lossCarriedIn: string; lossCovered: string; netProfit: string; distributable: string; lossCarriedOut: string; shares: { owner: string; partner: string }; people: Person[]; liquidity: { cash: string; committed: string; available: string }; capital: string; payouts: Payout[] }
+  lossCarriedIn: string; lossCovered: string; netProfit: string; distributable: string; lossCarriedOut: string; externalDistributed: string; shares: { owner: string; partner: string }; people: Person[]; liquidity: { cash: string; committed: string; available: string }; capital: string; payouts: Payout[] }
 interface Cash { id: string; name: string; currency: string; kind: string; countsTowardAvailable: boolean }
-const empty: Ov = { period: { from: null, to: "" }, invoicedProfit: "0", collectedProfit: "0", releasedBefore: "0", newlyEligible: "0", expenses: { total: "0", byAccount: [], other: "0" }, lossCarriedIn: "0", lossCovered: "0", netProfit: "0", distributable: "0", lossCarriedOut: "0", shares: { owner: "0", partner: "0" }, people: [], liquidity: { cash: "0", committed: "0", available: "0" }, capital: "0", payouts: [] };
+const empty: Ov = { period: { from: null, to: "" }, invoicedProfit: "0", collectedProfit: "0", releasedBefore: "0", newlyEligible: "0", expenses: { total: "0", byAccount: [], other: "0" }, lossCarriedIn: "0", lossCovered: "0", netProfit: "0", distributable: "0", lossCarriedOut: "0", externalDistributed: "0", shares: { owner: "0", partner: "0" }, people: [], liquidity: { cash: "0", committed: "0", available: "0" }, capital: "0", payouts: [] };
 const R = ({ k, v, strong, cls }: { k: string; v: string; strong?: boolean; cls?: string }) => <tr className={cls} style={strong ? { fontWeight: 700 } : undefined}><td>{k}</td><td><span className="num">{money(v)}</span></td></tr>;
 
 export default function Profits() {
@@ -46,11 +46,12 @@ export default function Profits() {
         {Number(o.lossCarriedIn) > 0 && <R k="− خسائر مرحَّلة من فترات سابقة (المغطّى منها)" v={o.lossCovered} />}
         <R k="صافي الربح القابل للتوزيع" v={o.distributable} strong cls="paidrow" />
         <R k="حصة صاحب المال" v={o.shares.owner} /><R k="حصة الشريك" v={o.shares.partner} />
+        {Number(o.externalDistributed) > 0 && <R k="للعلم: أرباح فواتير وُزّعت خارج النظام (نصفها لكل شريك — لا تدخل هذا التوزيع)" v={o.externalDistributed} />}
       </tbody></table></div>
 
     <h2 style={{ marginTop: 16 }}>حصص الأرباح</h2>
     <div className="grid">{o.people.map((p) => <div className="card" key={p.kind}><strong>{p.name}</strong> <small>({p.kind === "OWNER" ? "صاحب المال" : "الشريك"})</small>
-      <table><tbody><R k="حصته المعتمدة" v={p.approved} /><R k="حصة الفترة الحالية (تُعتمد عند الصرف)" v={p.pending} /><R k="ما سُحب منها" v={p.paid} /><R k="المتاح له للسحب" v={p.available} strong cls="paidrow" /></tbody></table>
+      <table><tbody><R k="حصته المعتمدة" v={p.approved} /><R k="حصة الفترة الحالية (تُعتمد عند الصرف)" v={p.pending} /><R k="ما سُحب منها" v={p.paid} />{Number(p.externalDistributed) > 0 && <R k="وصله خارج النظام (للعلم)" v={p.externalDistributed} />}<R k="المتاح له للسحب" v={p.available} strong cls="paidrow" /></tbody></table>
       {owner && can(me, "profit_payout:create") && <button className="primary" disabled={busy || Number(p.available) <= 0} onClick={() => setWho(p.kind)}>صرف / سحب أرباح</button>}</div>)}</div>
     {who && owner && <form className="card row" onSubmit={withdraw} style={{ marginTop: 12 }}>
       <div><label>المستلم</label><strong>{o.people.find((p) => p.kind === who)?.name}</strong> <small>المتاح {money(o.people.find((p) => p.kind === who)?.available)}</small></div>
