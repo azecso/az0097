@@ -53,7 +53,7 @@ describe("external profit smaller than the invoice profit, and the safety rules"
   it("owner only, IQD cash only, note required, never above what is still owed on the invoice", async () => {
     const inv = (await w.sale({ product: P, qty: "1", price: "900", date: "2026-03-12" })).id;
     expect((await receipt(inv, "800", { externalAmount: "100", externalNote: "x y z" }, w.acct)).body.error.code).toBe("EXTERNAL_PROFIT_OWNER_ONLY");
-    expect((await receipt(inv, "800", { externalAmount: "100", externalNote: "" })).body.error.code).toBe("EXTERNAL_PROFIT_NOTE_REQUIRED");
+    expect((await receipt(inv, "800", { externalAmount: "100", externalNote: "" })).status).toBe(200);                       // note is optional: a default text is stored
     expect((await receipt(inv, "800", { externalAmount: "101", externalNote: "زيادة" })).body.error.code).toBe("OVER_ALLOCATION");
     expect((await receipt(inv, "0", { externalAmount: "0" })).status).toBe(400);
   });

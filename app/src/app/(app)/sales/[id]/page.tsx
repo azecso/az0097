@@ -14,10 +14,12 @@ interface Doc { id: string; customerId: string; docNo: string | null; draftRef: 
 export default function InvoiceView() {
   const { id } = useParams<{ id: string }>(); const router = useRouter(); const me = useMe();
   const { data: d, reload, err } = useLoad<Doc | null>(`/api/sales-invoices/${id}`, null); const { msg, busy, run } = useAction(reload);
-  const [reason, setReason] = useState(""); const [ret, setRet] = useState<Record<string, string>>({}); const [dq, setDq] = useState<Record<string, string>>({}); const [pay, setPay] = useState(""); const [extOn, setExtOn] = useState(false); const [extAmt, setExtAmt] = useState(""); const [extNote, setExtNote] = useState("");
+  const [reason, setReason] = useState(""); const [ret, setRet] = useState<Record<string, string>>({}); const [dq, setDq] = useState<Record<string, string>>({}); const [pay, setPay] = useState(""); const [extOn, setExtOn] = useState(false); const [extAmt] = useState(""); const [extNote, setExtNote] = useState("");
   const cash = useLoad<{ id: string; name: string; currency: string }[]>("/api/cash-accounts", []).data; const [acct, setAcct] = useState("");
   const cst = useLoad<{ unappliedCredit?: string } | null>(d && d.status === "POSTED" ? `/api/customers/${d.customerId}/statement` : null, null).data;
   if (!d) return <p>{err || "جارٍ التحميل…"}</p>;
+  const safe = (v: string | undefined | null) => { try { return new Decimal(v || 0); } catch { return new Decimal(0); } };
+  const extComputed = Decimal.max(0, safe(d.outstanding).minus(safe(pay)));
   const posted = d.status === "POSTED"; const canProfit = can(me, "report:view");
   return (<>
     <h1>فاتورة بيع <span className="num">{d.docNo ?? d.draftRef}</span> <StatusBadge s={d.status} /></h1>
@@ -49,14 +51,14 @@ export default function InvoiceView() {
     </p>
     <Attach entityType="sales_invoice" entityId={id} label="مرفقات الفاتورة (صور/إيصالات)" />
     {posted && Number(d.outstanding) > 0 && can(me, "voucher:create") && <div className="card" style={{ marginTop: 12 }}><h2>تسجيل قبض على هذه الفاتورة</h2>
-      <div className="row"><div><label>المبلغ المقبوض نقداً</label><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><input value={pay} onChange={(e) => setPay(e.target.value)} inputMode="decimal" dir="ltr" /><button type="button" onClick={() => setPay(Decimal.max(0, new Decimal(d.outstanding ?? 0).minus(extOn ? extAmt || 0 : 0)).toString())}>المتبقي كاملاً</button></div></div>
+      <div className="row"><div><label>{extOn ? "المبلغ المقبوض الفعلي (بدون أرباح)" : "المبلغ المقبوض نقداً"}</label><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><input value={pay} onChange={(e) => setPay(e.target.value)} inputMode="decimal" dir="ltr" />{!extOn && <button type="button" onClick={() => setPay(d.outstanding ?? "")}>المتبقي كاملاً</button>}</div></div>
         <div><label>الاستلام في</label><select value={acct} onChange={(e) => setAcct(e.target.value)}><option value="">اختر…</option>{cash.filter((c) => c.currency === d.currency).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
         <button className="primary" disabled={busy || !pay || !acct} onClick={async () => {
-          const r = await run(() => api<{ id: string }>("/api/customer-receipts", { method: "POST", body: { customerId: d.customerId, docDate: today(), cashAccountId: acct, currency: d.currency, amount: pay, allocations: [{ invoiceId: id, amount: pay, externalAmount: extOn ? extAmt || "0" : "0", externalNote: extOn ? extNote : null }] } }), "حُفظ السند");
-          if (r) { const ok2 = await run(() => api(`/api/customer-receipts/${r.id}/post`, { method: "POST" }), "تم ترحيل سند القبض"); if (ok2 !== undefined) { setPay(""); setExtOn(false); setExtAmt(""); setExtNote(""); } } }}>قبض</button></div>
+          const r = await run(() => api<{ id: string }>("/api/customer-receipts", { method: "POST", body: { customerId: d.customerId, docDate: today(), cashAccountId: acct, currency: d.currency, amount: pay, allocations: [{ invoiceId: id, amount: pay, externalAmount: extOn ? extComputed.toString() : "0", externalNote: extOn ? extNote : null }] } }), "حُفظ السند");
+          if (r) { const ok2 = await run(() => api(`/api/customer-receipts/${r.id}/post`, { method: "POST" }), "تم ترحيل سند القبض"); if (ok2 !== undefined) { setPay(""); setExtOn(false); setExtNote(""); } } }}>قبض</button></div>
       {me.user.isOwner && d.currency === "IQD" && <div style={{ marginTop: 8 }}><label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><input type="checkbox" style={{ width: 22, minHeight: 22 }} checked={extOn} onChange={(e) => setExtOn(e.target.checked)} />بدون أرباح (الربح موزَّع خارج النظام)</label>
-        {extOn && <div className="row"><div><label>مبلغ الربح الخارجي</label><input value={extAmt} onChange={(e) => setExtAmt(e.target.value)} inputMode="decimal" dir="ltr" /></div><div><label>ملاحظة (إلزامية)</label><input value={extNote} onChange={(e) => setExtNote(e.target.value)} /></div>
-          <small>يُسدَّد من الفاتورة {money(new Decimal(pay || 0).plus(extAmt || 0).toString())} من {money(d.outstanding)} — الباقي بعد القبض {money(Decimal.max(0, new Decimal(d.outstanding ?? 0).minus(pay || 0).minus(extAmt || 0)).toString())}. لا يدخل الصندوق ولا يُوزَّع مرة ثانية (نصفه لكل شريك).</small></div>}</div>}</div>}
+        {extOn && <div className="row"><div><label>ملاحظة (اختيارية)</label><input value={extNote} onChange={(e) => setExtNote(e.target.value)} /></div>
+          <small>المقبوض الفعلي {money(pay || "0")} — <strong>الباقي من الفاتورة {money(extComputed.toString())} يُسجَّل ربحاً موزَّعاً خارج النظام</strong> (نصفه لكل شريك) وتُغلق الفاتورة. لا يدخل الصندوق ولا يُوزَّع مرة ثانية.</small></div>}</div>}</div>}
     {posted && d.deliveryMode === "SEPARATE" && can(me, "sales:create") && <div className="card" style={{ marginTop: 12 }}><h2>سند تسليم</h2>
       {d.lines.map((l) => <div className="row" key={l.id}><div>{l.productName} (المتبقي {money(String(Number(l.qtyBase) - Number(l.delivered)))})</div><div><label>الكمية</label><input value={dq[l.id] ?? ""} onChange={(e) => setDq({ ...dq, [l.id]: e.target.value })} dir="ltr" inputMode="decimal" /></div></div>)}
       <button disabled={busy} onClick={async () => { const lines = d.lines.filter((l) => dq[l.id]).map((l) => ({ salesLineId: l.id, qtyBase: dq[l.id] })); const r = await run(() => api<{ id: string }>("/api/delivery-notes", { method: "POST", body: { invoiceId: id, docDate: today(), lines } }), "حُفظ السند");
@@ -70,7 +72,9 @@ export default function InvoiceView() {
         if (r) await run(() => api(`/api/sales-returns/${r.id}/post`, { method: "POST" }), "تم ترحيل المرتجع"); }}>إنشاء وترحيل المرتجع</button></div>}
     {posted && can(me, "sales:cancel") && <div className="card" style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
       <Link href={`/sales/new?edit=${id}`}><button>✏️ تعديل الفاتورة</button></Link>
-      <button className="danger" disabled={busy} onClick={async () => { const why = window.prompt("سبب حذف الفاتورة (يُحفظ في سجل التدقيق)؟"); if (!why || why.trim().length < 3) return; const r = await run(() => api(`/api/sales-invoices/${id}/reverse`, { method: "POST", body: { reason: why.trim() } }), "حُذفت الفاتورة"); if (r !== undefined) router.push("/sales"); }}>🗑 حذف الفاتورة</button>
-      <small style={{ flexBasis: "100%" }}>يبقى رقم الفاتورة عند التعديل. لا يمكن تعديل أو حذف فاتورة عليها قبض أو مرتجع (احذف السند أولاً).</small></div>}
+      <button className="danger" disabled={busy} onClick={async () => { const why = window.prompt("سبب حذف الفاتورة (يُحفظ في سجل التدقيق)؟"); if (!why || why.trim().length < 3) return;
+        const call = (cascade: boolean) => api(`/api/sales-invoices/${id}/reverse`, { method: "POST", body: { reason: why.trim(), cascade } });
+        const r = await run(async () => { try { return await call(false); } catch (e) { if ((e as { code?: string }).code === "HAS_RECEIPTS" && window.confirm("عليها سندات قبض. هل تحذف سندات القبض معها (يعود المبلغ من الصندوق)؟")) return await call(true); throw e; } }, "حُذفت الفاتورة"); if (r !== undefined) router.push("/sales"); }}>🗑 حذف الفاتورة</button>
+      <small style={{ flexBasis: "100%" }}>يبقى رقم الفاتورة عند التعديل. التعديل يحافظ على سندات القبض المرتبطة (بنفس أرقامها). حذف فاتورة عليها قبض يحذف سندات قبضها معها بعد تأكيدك. لا يصح مع وجود مرتجع.</small></div>}
   </>);
 }

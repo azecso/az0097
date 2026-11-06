@@ -31,7 +31,7 @@ function Inner() {
     if (r?.mode === "queued") { setMsg({ t: "ok", m: "📴 حُفظت على جهازك مشفّرة وبانتظار المزامنة — ستُرسل تلقائياً عند عودة الاتصال (تابعها من «المزامنة»)." }); setLines([blank]); setDisc(""); } else if (r) router.push(`/sales/${r.id}`);
   }
   return (<>
-    <h1>{editId ? "تعديل فاتورة بيع (مسودة)" : sp.get("copy") ? "فاتورة بيع مصحَّحة (نسخة جديدة)" : "فاتورة بيع جديدة"}</h1>{editId && ex && ex.status !== "DRAFT" && ex.status !== "POSTED" && <div className="msg err">هذه الفاتورة محذوفة ولا يمكن تعديلها.</div>}{editId && ex?.status === "POSTED" && <div className="msg">فاتورة مرحّلة: يبقى رقمها <strong className="num">{ex.docNo}</strong> وتُعاد حركة المخزون والقيود تلقائياً. لا يصح التعديل إن كان عليها قبض أو مرتجع.</div>}
+    <h1>{editId ? "تعديل فاتورة بيع (مسودة)" : sp.get("copy") ? "فاتورة بيع مصحَّحة (نسخة جديدة)" : "فاتورة بيع جديدة"}</h1>{editId && ex && ex.status !== "DRAFT" && ex.status !== "POSTED" && <div className="msg err">هذه الفاتورة محذوفة ولا يمكن تعديلها.</div>}{editId && ex?.status === "POSTED" && <div className="msg">فاتورة مرحّلة: يبقى رقمها <strong className="num">{ex.docNo}</strong> وتُعاد حركة المخزون والقيود تلقائياً. تبقى سندات القبض المرتبطة بأرقامها. لا يصح التعديل مع وجود مرتجع.</div>}
     <p>تُحفظ مسودة؛ عند الترحيل يصدر الرقم النهائي، وتُسجَّل المبيعات، وتخرج البضاعة من أقدم الطبقات وتُحتسب تكلفتها (سند تسليم تلقائي).</p>
     <form key={ex?.id ?? "new"} className="card" onSubmit={save} style={{ display: "grid", gap: 12 }}>
       <div className="row">

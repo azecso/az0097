@@ -44,7 +44,6 @@ async function validate(tx: Tx, i: z.infer<typeof receiptSchema>, who: Principal
     if (ext.gt(0)) {                                              // profit already distributed outside the system: owner only, cash receipts in dinar only
       if (!who.isOwner) throw badRequest("EXTERNAL_PROFIT_OWNER_ONLY", "تسجيل الربح الموزَّع خارج النظام للمالك فقط");
       if (i.kind !== "CASH" || i.currency !== "IQD") throw badRequest("EXTERNAL_PROFIT_IQD_CASH_ONLY", "الربح الخارجي يُسجَّل في سند قبض نقدي بالدينار فقط");
-      if (!(a.externalNote ?? "").trim()) throw badRequest("EXTERNAL_PROFIT_NOTE_REQUIRED", "اكتب ملاحظة توضح الربح الموزَّع خارج النظام");
     }
     if (d(a.amount).lte(0) && ext.lte(0)) throw badRequest("EMPTY_ALLOCATION", "حدّد مبلغاً مستحصلاً أو ربحاً خارجياً للفاتورة");
     if (d(a.amount).plus(ext).gt((await invoiceFinancials(tx, a.invoiceId)).outstanding)) throw conflict("OVER_ALLOCATION", "المبلغ المخصص (المستحصل + الخارجي) يتجاوز المتبقي على الفاتورة");
@@ -60,7 +59,7 @@ async function writeAllocs(tx: Tx, companyId: string, id: string, allocs: { invo
   await tx`DELETE FROM receipt_allocations WHERE receipt_id = ${id}`;
   for (const a of allocs) {
     if (d(a.amount).gt(0)) await tx`INSERT INTO receipt_allocations(company_id, receipt_id, invoice_id, amount) VALUES (${companyId}, ${id}, ${a.invoiceId}, ${a.amount})`;
-    if (d(a.externalAmount ?? "0").gt(0)) await tx`INSERT INTO receipt_allocations(company_id, receipt_id, invoice_id, amount, external, note) VALUES (${companyId}, ${id}, ${a.invoiceId}, ${a.externalAmount!}, true, ${a.externalNote ?? null})`;
+    if (d(a.externalAmount ?? "0").gt(0)) await tx`INSERT INTO receipt_allocations(company_id, receipt_id, invoice_id, amount, external, note) VALUES (${companyId}, ${id}, ${a.invoiceId}, ${a.externalAmount!}, true, ${(a.externalNote ?? "").trim() || "ربح موزَّع خارج النظام"})`;
   }
 }
 
@@ -102,7 +101,7 @@ export async function postReceipt(tx: Tx, who: Principal, actor: Actor, id: stri
   for (const a of allRows) { const e = byInv.get(a.invoice_id as string) ?? { invoiceId: a.invoice_id as string, amount: "0", externalAmount: "0", externalNote: null }; if (a.external) { e.externalAmount = a.amount as string; e.externalNote = a.note as string | null; } else e.amount = a.amount as string; byInv.set(a.invoice_id as string, e); }
   await validate(tx, { customerId: r.customer_id, docDate: dateOf(r.doc_date), kind: r.kind, cashAccountId: r.cash_account_id, currency: r.currency, amount: r.amount, allocations: [...byInv.values()] } as z.infer<typeof receiptSchema>, who);
   const date = dateOf(r.doc_date), fx = r.exchange_rate_snapshot as string, cur = r.currency as string;
-  const docNo = (await tx`SELECT next_document_number(${who.companyId}, 'customer_receipt', ${yearOf(date)}) AS n`)[0]!.n as string;
+  const docNo = (r.doc_no as string | null) ?? (await tx`SELECT next_document_number(${who.companyId}, 'customer_receipt', ${yearOf(date)}) AS n`)[0]!.n as string;   // an amended receipt keeps its number
   let arBase = d(0), allocated = d(0);
   for (const a of allocs) { arBase = arBase.plus(toBase(a.amount, a.fx, cur)); allocated = allocated.plus(a.amount); }
   const rest = d(r.amount).minus(allocated), creditBase = rest.gt(0) ? toBase(rest, fx, cur) : d(0);
@@ -140,6 +139,52 @@ export async function createCashReceipt(tx: Tx, who: Principal, actor: Actor, o:
     VALUES (${who.companyId}, ${draftRef()}, ${o.docDate}, 'CASH', ${o.customerId}, ${o.cashAccountId}, ${o.auto ? o.invoiceId : null}, ${o.currency}, ${o.rate}, ${o.amount}, 'قبض تلقائي لبيع نقدي', ${who.userId}) RETURNING id`;
   await tx`INSERT INTO receipt_allocations(company_id, receipt_id, invoice_id, amount) VALUES (${who.companyId}, ${r!.id}, ${o.invoiceId}, ${o.amount})`;
   return postReceipt(tx, who, actor, r!.id);
+}
+
+/** Undo a POSTED receipt's accounting (journal + cash) and put it back to DRAFT keeping its number — only inside an amend transaction. */
+export async function unpostReceipt(tx: Tx, actor: Actor, id: string, reason: string) {
+  const [r] = await tx`SELECT * FROM customer_receipts WHERE id = ${id} FOR UPDATE`;
+  if (!r || r.status !== "POSTED") throw conflict("NOT_POSTED");
+  await reverseEntry(tx, actor, r.journal_entry_id, new Date().toISOString().slice(0, 10), `${reason} ${r.doc_no}`);
+  if (r.kind === "CASH") await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id)
+    SELECT company_id, cash_account_id, -amount, -amount_base, 'customer_receipt', doc_id FROM cash_movements WHERE doc_type = 'customer_receipt' AND doc_id = ${id} AND amount > 0`;
+  await tx`SELECT set_config('app.amend', 'on', true)`;
+  await tx`UPDATE customer_receipts SET status = 'DRAFT', version = version + 1, updated_at = now() WHERE id = ${id}`;
+}
+
+export const receiptUpdateSchema = receiptSchema.extend({ version: z.number().int() });
+/** Edit a POSTED receipt keeping its number (owner/accountant with voucher:cancel). The receipt of a cash sale is edited through its invoice. */
+export async function amendReceipt(tx: Tx, who: Principal, actor: Actor, id: string, i: z.infer<typeof receiptUpdateSchema>) {
+  const [r] = await tx`SELECT * FROM customer_receipts WHERE id = ${id} FOR UPDATE`;
+  if (!r) throw notFound();
+  if (r.status !== "POSTED") throw conflict("NOT_POSTED", "التعديل بهذه الطريقة للسندات المرحّلة فقط");
+  if (r.auto_for_invoice_id) throw conflict("AUTO_RECEIPT", "هذا قبض تلقائي لبيع نقدي؛ عدّل الفاتورة نفسها");
+  if (r.version !== i.version) throw conflict("VERSION_CONFLICT", "تم تعديل السند من جهة أخرى؛ أعد فتحه");
+  await unpostReceipt(tx, actor, id, "تعديل سند قبض");
+  await validate(tx, i, who);
+  const rate = await resolveRate(tx, i.currency, i.docDate, i.exchangeRate ?? undefined);
+  await tx`UPDATE customer_receipts SET doc_date = ${i.docDate}, kind = ${i.kind}, customer_id = ${i.customerId}, cash_account_id = ${i.kind === "CASH" ? i.cashAccountId! : null}, currency = ${i.currency},
+      exchange_rate_snapshot = ${rate}, amount = ${i.amount}, notes = ${i.notes ?? null}, updated_at = now() WHERE id = ${id}`;
+  await writeAllocs(tx, who.companyId, id, i.allocations);
+  const h = await postReceipt(tx, who, actor, id);
+  await audit(tx, actor, { action: "receipt.amend", entityType: "customer_receipt", entityId: id, before: { amount: r.amount, docNo: r.doc_no }, after: { amount: i.amount } });
+  return h;
+}
+
+/** The editable form of a posted receipt: each invoice with what is still owed WITHOUT this receipt. */
+export async function getReceiptForEdit(tx: Tx, id: string) {
+  const [r] = await tx`SELECT r.id, r.doc_no AS "docNo", r.doc_date::text AS "docDate", r.kind, r.customer_id AS "customerId", r.cash_account_id AS "cashAccountId", r.currency, r.exchange_rate_snapshot::text AS "exchangeRate",
+      r.amount::text AS amount, r.notes, r.status, r.version, r.auto_for_invoice_id AS "autoForInvoice" FROM customer_receipts r WHERE r.id = ${id}`;
+  if (!r) throw notFound();
+  const rows = await tx`SELECT si.id AS "invoiceId", si.doc_no AS "docNo", si.currency, si.due_date::text AS "dueDate", sum(CASE WHEN a.external THEN 0 ELSE a.amount END)::text AS cash,
+      sum(CASE WHEN a.external THEN a.amount ELSE 0 END)::text AS external, max(CASE WHEN a.external THEN a.note END) AS note
+    FROM receipt_allocations a JOIN sales_invoices si ON si.id = a.invoice_id WHERE a.receipt_id = ${id} GROUP BY si.id, si.doc_no, si.currency, si.due_date`;
+  const allocations = [];
+  for (const x of rows) {
+    const fin = await invoiceFinancials(tx, x.invoiceId as string);
+    allocations.push({ ...x, outstandingWithout: (r.status === "POSTED" ? d(fin.outstanding).plus(x.cash as string).plus(x.external as string) : d(fin.outstanding)).toString() });
+  }
+  return { ...r, allocations };
 }
 
 export async function reverseReceiptCore(tx: Tx, who: Principal, actor: Actor, id: string, reason: string) {

@@ -14,6 +14,7 @@ export default function Transfers() {
     e.preventDefault(); const f = new FormData(e.currentTarget);
     await run(() => api("/api/stock-transfers", { method: "POST", body: { docDate: String(f.get("date")), fromLocationId: String(f.get("from")), toLocationId: String(f.get("to")), lines } }), "حُفظت مسودة التحويل");
   }
+  const [showDel, setShowDel] = useState(false);
   return (<>
     <h1>تحويل المخزون بين الموقعين</h1>
     <p>التحويل الداخلي لا يُنشئ مبيعات ولا إيراداً ولا تكلفة بضاعة مباعة؛ تنتقل الطبقات بتكلفتها وتاريخ استلامها الأصلي.</p>
@@ -28,10 +29,11 @@ export default function Transfers() {
       <button type="button" onClick={() => setLines([...lines, { productId: "", uom: "", qty: "" }])}>+ بند</button>
       <button className="primary" disabled={busy}>حفظ كمسودة</button></form>}
     <MsgBox msg={msg} />
+    <label style={{ display: "inline-flex", gap: 6, alignItems: "center", margin: "4px 0" }}><input type="checkbox" checked={showDel} onChange={(e) => setShowDel(e.target.checked)} />إظهار المحذوفة</label>
     <div className="card cards-as-list" style={{ marginTop: 12 }}><table><thead><tr><th>الرقم</th><th>التاريخ</th><th>من</th><th>إلى</th><th>الحالة</th><th></th></tr></thead>
-      <tbody>{list.data.map((t) => <tr key={t.id}><td><span className="num">{t.docNo ?? t.draftRef}</span></td><td><span className="num">{t.docDate}</span></td><td>{t.from}</td><td>{t.to}</td><td><StatusBadge s={t.status} /></td>
+      <tbody>{list.data.filter((t) => showDel || t.status !== "REVERSED").map((t) => <tr key={t.id}><td><span className="num">{t.docNo ?? t.draftRef}</span></td><td><span className="num">{t.docDate}</span></td><td>{t.from}</td><td>{t.to}</td><td><StatusBadge s={t.status} /></td>
         <td><PrintLink path={`/print/doc/stock-transfer/${t.id}`} />{t.status === "DRAFT" && can(me, "stock_transfer:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/stock-transfers/${t.id}/post`, { method: "POST" }), "تم ترحيل التحويل")}>ترحيل</button>}
           {t.status === "DRAFT" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/stock-transfers/${t.id}`, { method: "DELETE" }), "حُذفت المسودة")}>حذف</button>}
-          {t.status === "POSTED" && can(me, "stock_transfer:cancel") && <ReverseBox busy={busy} onReverse={(reason) => run(() => api(`/api/stock-transfers/${t.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
+          {t.status === "POSTED" && can(me, "stock_transfer:cancel") && <ReverseBox label="حذف" busy={busy} onReverse={(reason) => run(() => api(`/api/stock-transfers/${t.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
         {list.data.length === 0 && <tr><td colSpan={6}>لا توجد تحويلات</td></tr>}</tbody></table></div></>);
 }

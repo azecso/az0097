@@ -12,6 +12,7 @@ export default function Cash() {
   const { msg, busy, run } = useAction(() => { void acc.reload(); void list.reload(); }); const [reason, setReason] = useState("");
   async function create(e: React.FormEvent<HTMLFormElement>) { e.preventDefault(); const f = new FormData(e.currentTarget);
     await run(() => api("/api/cash-transfers", { method: "POST", body: { docDate: String(f.get("date")), fromAccountId: String(f.get("from")), toAccountId: String(f.get("to")), amount: String(f.get("amount")), notes: String(f.get("notes") ?? "") || null } }), "حُفظ السند"); }
+  const [showDel, setShowDel] = useState(false);
   return (<><h1>النقدية والعهدة</h1>
     <div className="grid">{acc.data.map((a) => <div className="card stat" key={a.id}><div className="label">{a.name} — {KIND[a.kind]}</div><div className="value"><span className="num">{money(a.balance)}</span> <small>{a.currency}</small></div>
       {!a.countsTowardAvailable && <span className="badge">لا تُحتسب ضمن النقد المتاح</span>}</div>)}</div>
@@ -22,10 +23,11 @@ export default function Cash() {
       <div><label htmlFor="d">التاريخ</label><input id="d" name="date" type="date" defaultValue={today()} /></div>
       <div><label htmlFor="n">ملاحظة</label><input id="n" name="notes" /></div><button className="primary" disabled={busy}>سند تحويل / تسليم عهدة</button></form>}
     <MsgBox msg={msg} />
+    <label style={{ display: "inline-flex", gap: 6, alignItems: "center", margin: "4px 0" }}><input type="checkbox" checked={showDel} onChange={(e) => setShowDel(e.target.checked)} />إظهار المحذوفة</label>
     <div className="card cards-as-list" style={{ marginTop: 12 }}><table><thead><tr><th>الرقم</th><th>التاريخ</th><th>من</th><th>إلى</th><th>المبلغ</th><th>الحالة</th><th></th></tr></thead>
-      <tbody>{list.data.map((t) => <tr key={t.id}><td><span className="num">{t.docNo ?? t.draftRef}</span></td><td><span className="num">{t.docDate}</span></td><td>{t.from}</td><td>{t.to}</td><td><span className="num">{money(t.amount)} {t.currency}</span></td><td><StatusBadge s={t.status} /></td>
+      <tbody>{list.data.filter((t) => showDel || t.status !== "REVERSED").map((t) => <tr key={t.id}><td><span className="num">{t.docNo ?? t.draftRef}</span></td><td><span className="num">{t.docDate}</span></td><td>{t.from}</td><td>{t.to}</td><td><span className="num">{money(t.amount)} {t.currency}</span></td><td><StatusBadge s={t.status} /></td>
         <td><a href={`/print/cash-transfer/${t.id}`} target="_blank" rel="noreferrer"><button>طباعة</button></a>{t.status === "DRAFT" && can(me, "voucher:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/cash-transfers/${t.id}/post`, { method: "POST" }), "تم الترحيل")}>ترحيل</button>}
           {t.status === "DRAFT" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/cash-transfers/${t.id}`, { method: "DELETE" }), "حُذف")}>حذف</button>}
-          {t.status === "POSTED" && can(me, "voucher:cancel") && <ReverseBox busy={busy} onReverse={(reason) => run(() => api(`/api/cash-transfers/${t.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
+          {t.status === "POSTED" && can(me, "voucher:cancel") && <ReverseBox label="حذف" busy={busy} onReverse={(reason) => run(() => api(`/api/cash-transfers/${t.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
         {list.data.length === 0 && <tr><td colSpan={7}>لا توجد سندات تحويل</td></tr>}</tbody></table></div></>);
 }

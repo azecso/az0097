@@ -19,6 +19,7 @@ export default function Payments() {
     const r = await run(() => api<{ id: string }>("/api/supplier-payments", { method: "POST", body: { supplierId: String(f.get("sup")), docDate: String(f.get("date")), cashAccountId: String(f.get("cash")), currency: cur, exchangeRate: cur === "IQD" ? null : String(f.get("rate") || "") || null, amount: String(f.get("amount")), allocations } }), "حُفظت مسودة السند");
     if (r) setAlloc({});
   }
+  const [showDel, setShowDel] = useState(false);
   return (<>
     <h1>سندات الصرف للموردين</h1>
     {can(me, "voucher:create") && <form className="card" onSubmit={create} style={{ display: "grid", gap: 12 }}>
@@ -35,10 +36,11 @@ export default function Payments() {
           <td><span className="num">{a.dueDate ?? "—"}</span>{a.daysOverdue > 0 && <span className="badge"> متأخر {a.daysOverdue} يوم</span>}</td>
           <td><input style={{ maxWidth: 140 }} dir="ltr" inputMode="decimal" value={alloc[a.id] ?? ""} onChange={(e) => setAlloc({ ...alloc, [a.id]: e.target.value })} /></td></tr>)}</tbody></table></div>
       <MsgBox msg={msg} /><button className="primary" disabled={busy}>حفظ كمسودة</button></form>}
+    <label style={{ display: "inline-flex", gap: 6, alignItems: "center", margin: "4px 0" }}><input type="checkbox" checked={showDel} onChange={(e) => setShowDel(e.target.checked)} />إظهار المحذوفة</label>
     <div className="card cards-as-list" style={{ marginTop: 12 }}><table><thead><tr><th>الرقم</th><th>التاريخ</th><th>المورد</th><th>المبلغ</th><th>فرق الصرف (IQD)</th><th>الحالة</th><th></th></tr></thead>
-      <tbody>{list.data.map((p) => <tr key={p.id}><td><span className="num">{p.docNo ?? p.draftRef}</span></td><td><span className="num">{p.docDate}</span></td><td>{p.supplierName}</td><td><span className="num">{money(p.amount)} {p.currency}</span></td><td><span className="num">{money(p.fxDiffBase)}</span></td><td><StatusBadge s={p.status} /></td>
+      <tbody>{list.data.filter((p) => showDel || p.status !== "REVERSED").map((p) => <tr key={p.id}><td><span className="num">{p.docNo ?? p.draftRef}</span></td><td><span className="num">{p.docDate}</span></td><td>{p.supplierName}</td><td><span className="num">{money(p.amount)} {p.currency}</span></td><td><span className="num">{money(p.fxDiffBase)}</span></td><td><StatusBadge s={p.status} /></td>
         <td><a href={`/print/supplier-payment/${p.id}`} target="_blank" rel="noreferrer"><button>طباعة</button></a>{p.status === "DRAFT" && can(me, "voucher:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/supplier-payments/${p.id}/post`, { method: "POST" }), "تم الترحيل")}>ترحيل</button>}
           {p.status === "DRAFT" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/supplier-payments/${p.id}`, { method: "DELETE" }), "حُذفت المسودة")}>حذف</button>}
-          {p.status === "POSTED" && can(me, "voucher:cancel") && <ReverseBox busy={busy} onReverse={(reason) => run(() => api(`/api/supplier-payments/${p.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
+          {p.status === "POSTED" && can(me, "voucher:cancel") && <ReverseBox label="حذف" busy={busy} onReverse={(reason) => run(() => api(`/api/supplier-payments/${p.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
         {list.data.length === 0 && <tr><td colSpan={7}>لا توجد سندات</td></tr>}</tbody></table></div></>);
 }

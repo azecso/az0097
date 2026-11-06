@@ -19,6 +19,7 @@ export default function Expenses() {
     if (r?.mode === "queued") setMsg({ t: "ok", m: "📴 حُفظت على جهازك مشفّرة وبانتظار المزامنة — ستُرسل تلقائياً عند عودة الاتصال (تابعها من «المزامنة»)." });
   }
   const mainCash = cash.filter((c) => c.kind !== "PARTNER_CUSTODY");
+  const [showDel, setShowDel] = useState(false);
   return (<>
     <h1>المصاريف</h1>
     <p>المصروف يُسجَّل <strong>مرة واحدة</strong> عند الترحيل. السداد اللاحق للمصروف المستحق أو لذمة الشريك يخفض الالتزام والنقد فقط ولا يُنشئ مصروفاً جديداً.</p>
@@ -37,13 +38,14 @@ export default function Expenses() {
           {treat === "OFFSET_AGAINST_ADVANCES" && <div><label htmlFor="n">توثيق التسوية (إلزامي)</label><input id="n" name="note" required minLength={5} /></div>}</>}
       </div>
       <MsgBox msg={msg} /><button className="primary" disabled={busy}>حفظ كمسودة</button></form>}
+    <label style={{ display: "inline-flex", gap: 6, alignItems: "center", margin: "4px 0" }}><input type="checkbox" checked={showDel} onChange={(e) => setShowDel(e.target.checked)} />إظهار المحذوفة</label>
     <div className="card cards-as-list" style={{ marginTop: 12 }}><table><thead><tr><th>الرقم</th><th>التاريخ</th><th>التصنيف</th><th>البيان</th><th>المبلغ</th><th>الدفع</th><th>المستحق</th><th>الحالة</th><th></th></tr></thead>
-      <tbody>{list.data.map((x) => <tr key={x.id}><td><span className="num">{x.docNo ?? x.draftRef}</span></td><td><span className="num">{x.docDate}</span></td><td>{x.category}</td><td>{x.description}</td><td><span className="num">{money(x.amount)} {x.currency}</span></td>
+      <tbody>{list.data.filter((x) => showDel || x.status !== "REVERSED").map((x) => <tr key={x.id}><td><span className="num">{x.docNo ?? x.draftRef}</span></td><td><span className="num">{x.docDate}</span></td><td>{x.category}</td><td>{x.description}</td><td><span className="num">{money(x.amount)} {x.currency}</span></td>
         <td>{MODE[x.paymentMode]}{x.partnerTreatment === "OFFSET_AGAINST_ADVANCES" ? " (تسوية)" : ""}</td><td><span className="num">{money(x.outstanding)}</span></td><td><StatusBadge s={x.status} /></td>
         <td><PrintLink path={`/print/doc/expense/${x.id}`} />{x.status === "DRAFT" && can(me, "expense:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/expenses/${x.id}/post`, { method: "POST" }), "تم الترحيل")}>ترحيل</button>}
           {x.status === "DRAFT" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/expenses/${x.id}`, { method: "DELETE" }), "حُذفت المسودة")}>حذف</button>}
           {x.status === "POSTED" && Number(x.outstanding) > 0 && can(me, "expense:approve") && <><input aria-label="مبلغ السداد" placeholder="مبلغ السداد" style={{ maxWidth: 120 }} dir="ltr" value={pay[x.id] ?? ""} onChange={(e) => setPay({ ...pay, [x.id]: e.target.value })} />
             <button disabled={busy || !pay[x.id]} onClick={() => run(() => api("/api/expense-payments", { method: "POST", body: { expenseId: x.id, docDate: today(), cashAccountId: mainCash.find((c) => c.currency === x.currency)?.id, amount: pay[x.id] } }), "تم السداد")}>سداد</button></>}
-          {x.status === "POSTED" && can(me, "expense:cancel") && <ReverseBox busy={busy} onReverse={(reason) => run(() => api(`/api/expenses/${x.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
+          {x.status === "POSTED" && can(me, "expense:cancel") && <ReverseBox label="حذف" busy={busy} onReverse={(reason) => run(() => api(`/api/expenses/${x.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
         {list.data.length === 0 && <tr><td colSpan={9}>لا توجد مصاريف</td></tr>}</tbody></table></div></>);
 }

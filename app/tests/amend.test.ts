@@ -30,13 +30,25 @@ describe("editing a posted invoice keeps its number and hides the old version", 
     const a = await w.env.admin`SELECT count(*)::int AS n FROM audit_logs WHERE action = 'sales_invoice.amend'`; expect(a[0]!.n).toBe(2);
     expect((await list()).filter((x) => x.docNo === docNo)).toHaveLength(1);
   });
-  it("refused when the invoice has a payment, a return, or the accountant lacks the permission", async () => {
+  it("an invoice WITH a receipt can be edited: the receipt follows it with the same number; refused for returns, no permission, stale version, or a total below what was collected", async () => {
     const inv = (await w.sale({ product: P, qty: "1", price: "1000", date: "2026-03-05", type: "CREDIT" })).id; const g = await w.getInvoice(inv);
     const rc = await w.api(w.owner, w.R.receipts.POST, { method: "POST", body: { customerId: g.customerId, docDate: "2026-03-06", cashAccountId: w.ids.cashIQD, currency: "IQD", amount: "400", allocations: [{ invoiceId: inv, amount: "400" }] } });
     await w.api(w.owner, w.R.receiptPost, { method: "POST", params: { id: rc.body.id } });
-    expect((await amend(inv, body(g, "1", "900"))).body.error.code).toBe("HAS_RECEIPTS");
-    expect((await amend(id, body(await w.getInvoice(id), "1", "100"), w.acct)).status).toBe(403);
-    expect((await amend(id, body({ ...(await w.getInvoice(id)) }, "1", "100", { version: 999 }))).body.error.code).toBe("VERSION_CONFLICT");
+    const rno = (await w.api(w.owner, w.R.receiptId.GET, { params: { id: rc.body.id } })).body.docNo;
+    expect((await amend(inv, body(g, "1", "300"))).body.error.code).toBe("RECEIPT_EXCEEDS_NEW_TOTAL");     // 300 < 400 collected: nothing changes
+    expect((await w.getInvoice(inv)).status).toBe("POSTED");
+    const ok = await amend(inv, body(g, "2", "1000")); expect(ok.status).toBe(200);
+    const ng = await w.getInvoice(ok.body.id); expect(ng).toMatchObject({ docNo: g.docNo, net: "2000.0000", collected: "400.0000", outstanding: "1600" });
+    const after = (await w.api(w.owner, w.R.receiptId.GET, { params: { id: rc.body.id } })).body; expect(after).toMatchObject({ docNo: rno, status: "POSTED" }); expect((await w.tb()).balanced).toBe(true);
+    expect((await amend(ok.body.id, body(await w.getInvoice(ok.body.id), "1", "100"), w.acct)).status).toBe(403);
+    expect((await amend(ok.body.id, body({ ...(await w.getInvoice(ok.body.id)) }, "1", "100", { version: 999 }))).body.error.code).toBe("VERSION_CONFLICT");
+    id = ok.body.id;
+  });
+  it("deleting an invoice that has a receipt: refused, then allowed with 'cascade' (the receipt is deleted with it, cash goes back)", async () => {
+    const before = bal(await w.tb(), "1110");
+    expect((await w.api(w.owner, w.R.invoiceReverse, { method: "POST", params: { id }, body: { reason: "حذف" } })).body.error.code).toBe("HAS_RECEIPTS");
+    expect((await w.api(w.owner, w.R.invoiceReverse, { method: "POST", params: { id }, body: { reason: "حذف", cascade: true } })).status).toBe(200);
+    expect(bal(await w.tb(), "1110") - before).toBe(-400); expect((await list()).some((x) => x.id === id)).toBe(false); expect((await w.tb()).balanced).toBe(true);
   });
   it("deleting a posted invoice (reverse) removes it from the lists; it can be shown with the 'cancelled' filter", async () => {
     const inv = (await w.sale({ product: P, qty: "1", price: "1000", date: "2026-03-09", type: "CREDIT" })).id; const g = await w.getInvoice(inv);
@@ -50,5 +62,21 @@ describe("editing a posted invoice keeps its number and hides the old version", 
     expect(bal(await w.tb(), "1110") - before).toBe(2000);
     const r = await amend(inv, body(g, "1", "3000", { saleType: "CASH", cashAccountId: w.ids.cashIQD })); expect(r.status).toBe(200);
     expect(bal(await w.tb(), "1110") - before).toBe(3000); expect((await w.getInvoice(r.body.id)).outstanding).toBe("0");
+  });
+});
+
+describe("editing a posted receipt keeps its number", () => {
+  it("800 -> 700: same number, cash follows, invoice outstanding follows; automatic cash-sale receipts are edited through the invoice", async () => {
+    const inv = (await w.sale({ product: P, qty: "1", price: "1000", date: "2026-04-01", type: "CREDIT" })).id; const g = await w.getInvoice(inv);
+    const mk = (amount: string) => ({ customerId: g.customerId, docDate: "2026-04-02", kind: "CASH", cashAccountId: w.ids.cashIQD, currency: "IQD", amount, allocations: [{ invoiceId: inv, amount }] });
+    const rc = await w.api(w.owner, w.R.receipts.POST, { method: "POST", body: mk("800") }); await w.api(w.owner, w.R.receiptPost, { method: "POST", params: { id: rc.body.id } });
+    const cur = (await w.api(w.owner, w.R.receiptId.GET, { params: { id: rc.body.id } })).body; const cash0 = bal(await w.tb(), "1110");
+    const edit = await w.api(w.owner, w.R.receiptAmend, { method: "POST", params: { id: rc.body.id }, body: { ...mk("700"), version: (await w.api(w.owner, w.R.receiptEdit, { params: { id: rc.body.id } })).body.version } });
+    expect(edit.status).toBe(200); expect(edit.body.docNo).toBe(cur.docNo);
+    expect(bal(await w.tb(), "1110") - cash0).toBe(-100); expect((await w.getInvoice(inv)).outstanding).toBe("300"); expect((await w.tb()).balanced).toBe(true);
+    const form = (await w.api(w.owner, w.R.receiptEdit, { params: { id: rc.body.id } })).body; expect(form.allocations[0]).toMatchObject({ docNo: g.docNo, cash: "700.0000", outstandingWithout: "1000" });
+    const auto = (await w.api(w.owner, w.R.receipts.GET)).body.find((x: any) => x.autoForInvoice); if (auto) expect((await w.api(w.owner, w.R.receiptAmend, { method: "POST", params: { id: auto.id }, body: { ...mk("1"), version: 1 } })).body.error.code).toBe("AUTO_RECEIPT");
+    expect((await w.api(w.acct, w.R.receiptAmend, { method: "POST", params: { id: rc.body.id }, body: { ...mk("600"), version: 99 } })).status).toBe(403);
+    expect((await w.api(w.owner, w.R.receiptAmend, { method: "POST", params: { id: rc.body.id }, body: { ...mk("600"), version: 1 } })).body.error.code).toBe("VERSION_CONFLICT");
   });
 });

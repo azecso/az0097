@@ -37,9 +37,9 @@ export default function PurchaseView() {
       {d.status === "DRAFT" && can(me, "purchase:edit_draft") && <button className="danger" disabled={busy} onClick={async () => { if (await run(() => api(`/api/purchases/${id}`, { method: "DELETE" }), "حُذفت المسودة")) router.push("/purchases"); }}>حذف المسودة</button>}
     </p>
     <Attach entityType="purchase_order" entityId={id} label="صور فاتورة المورد والإيصالات" />
-    {posted && can(me, "purchase:cancel") && <div className="card" style={{ marginTop: 12 }}><h2>عكس المستند</h2><p>لا يُعدَّل المستند المرحّل؛ يُنشأ قيد عكسي بالسبب أدناه.</p>
+    {posted && can(me, "purchase:cancel") && <div className="card" style={{ marginTop: 12 }}><h2>حذف الفاتورة</h2><p>لا يُعدَّل المستند المرحّل؛ يُنشأ قيد عكسي بالسبب أدناه.</p>
       <div className="row"><div><label htmlFor="rs">السبب</label><input id="rs" value={reason} onChange={(e) => setReason(e.target.value)} /></div>
-        <button className="danger" disabled={busy || reason.length < 3} onClick={() => run(() => api(`/api/purchases/${id}/reverse`, { method: "POST", body: { reason } }), "تم عكس المستند")}>عكس</button>
+        <button className="danger" disabled={busy || reason.length < 3} onClick={() => run(() => api(`/api/purchases/${id}/reverse`, { method: "POST", body: { reason } }), "تم عكس المستند")}>حذف</button>
         <button disabled={busy || reason.length < 3} title="يعكس الفاتورة ثم يفتح نسخة جديدة منها للتعديل" onClick={async () => { const r = await run(() => api(`/api/purchases/${id}/reverse`, { method: "POST", body: { reason } }), "تم العكس — عدّل النسخة الجديدة"); if (r !== undefined) router.push(`/purchases/new?copy=${id}`); }}>✏️ تصحيح (عكس + نسخة جديدة)</button></div></div>}
     {posted && can(me, "purchase:create") && <div className="card" style={{ marginTop: 12 }}><h2>مرتجع للمورد</h2>
       <p>يعود المرتجع من نفس طبقة الشراء وبتكلفتها. ما بيع منها يتطلب سبباً استثنائياً وموافقة المالك.</p>
