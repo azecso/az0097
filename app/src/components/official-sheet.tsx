@@ -31,12 +31,30 @@ export const phonesOf = (p: string[] | null | undefined) => (p && p.length ? p.j
 export function OfficialSheet({ co, who, title, titleEn, pdfPath, status, boxes, children, final, rightLabel = "المحاسب", leftLabel, leftName = "", wide }: {
   co: Co | null; who: string | null; title: string; titleEn: string; pdfPath: string; status?: string; boxes?: ReactNode; children: ReactNode; final?: ReactNode; rightLabel?: string; leftLabel: string; leftName?: string; wide?: boolean;
 }) {
+  const [busy, setBusy] = useState(false); const [note, setNote] = useState(""); const [fallback, setFallback] = useState(false);
   if (!co || who === null) return <Loading err="" />;
   const pdf = `/api/pdf?path=${encodeURIComponent(pdfPath)}`;
+  /** Server PDF (official: footer on every page). If the server cannot make one (no browser engine, timeout, offline) we say why and fall back to the browser's own print / "Save as PDF". */
+  async function getPdf(): Promise<Blob | null> {
+    setBusy(true); setNote("");
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 45000);
+    try {
+      const r = await fetch(pdf, { credentials: "same-origin", signal: ctl.signal });
+      if (r.ok && (r.headers.get("content-type") ?? "").includes("pdf")) return await r.blob();
+      let msg = ""; try { msg = (await r.json())?.error?.message ?? ""; } catch { /* not json */ }
+      setNote(`تعذّر إنشاء ملف PDF من الخادم${msg ? ` (${msg})` : ` (رمز ${r.status})`}. فُتحت طباعة المتصفح — اختر «حفظ كـ PDF» من نافذة الطباعة.`);
+    } catch { setNote("تعذّر الوصول إلى خدمة PDF (انتهت المهلة أو لا يوجد اتصال). فُتحت طباعة المتصفح — اختر «حفظ كـ PDF» من نافذة الطباعة."); }
+    finally { clearTimeout(timer); setBusy(false); }
+    return null;
+  }
+  const browserPrint = () => { setFallback(true); setTimeout(() => window.print(), 200); };
+  const printNow = async () => { const b = await getPdf(); if (!b) return browserPrint(); const u = URL.createObjectURL(b); if (!window.open(u, "_blank")) window.location.href = u; };
+  const download = async () => { const b = await getPdf(); if (!b) return browserPrint(); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = `${pdfPath.split("?")[0]!.split("/").filter(Boolean).slice(-2).join("-")}.pdf`; document.body.appendChild(a); a.click(); a.remove(); };
   return (<div className="print-root" dir="rtl">
-    <div className="print-bar"><a href={pdf} target="_blank" rel="noreferrer"><button>🖨 طباعة (PDF رسمي A4)</button></a><a href={pdf} download>⬇ تنزيل PDF</a></div>
+    <div className="print-bar"><button type="button" disabled={busy} onClick={printNow}>{busy ? "جارٍ التجهيز…" : "🖨 طباعة"}</button><button type="button" disabled={busy} onClick={download}>⬇ تنزيل PDF</button><button type="button" onClick={browserPrint}>🖨 طباعة المتصفح</button></div>
+    {note && <div className="print-note" role="alert">{note}</div>}
     <template id="pdf-footer" dangerouslySetInnerHTML={{ __html: footerHtml(co) }} />
-    <div className="inv" data-ready="1">
+    <div className={`inv${fallback ? " fb" : ""}`} data-ready="1">
       <div className="wm" aria-hidden="true"><img src="/brand/logo.webp" alt="" /><b>{co.name}</b>{co.nameEn && <i>{co.nameEn}</i>}</div>
       <div className="foot"><div><b>{co.name}</b>{co.nameEn && <> — <span className="en">{co.nameEn}</span></>}{co.address && <> — {co.address}</>}</div>
         {contactOf(co).length > 0 && <div className="row2">{contactOf(co).map((c) => <span key={c.k}>{c.k}: <span className="num">{c.v}</span></span>)}</div>}</div>

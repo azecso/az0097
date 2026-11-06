@@ -82,3 +82,5 @@ table { width: 100%; border-collapse: collapse; } th, td { text-align: start; pa
   .drawer a { display: block; padding: 14px 12px; border-bottom: 1px solid var(--border); font-size: 16px; } .drawer a[aria-current="page"] { font-weight: 700; color: var(--accent); }
 }
 @media (min-width: 801px) { .tabmore { display: none; } }
+.print-note { padding: 8px 16px; background: #fff4da; color: #6b4a00; border-bottom: 1px solid #e3c987; font-size: 13px; }
+.print-bar button:disabled { opacity: .6; cursor: wait; }

@@ -19,7 +19,7 @@ export function renderPdf(origin: string, path: string, sessionCookie: string): 
       const ctx = await browser.newContext({ locale: "ar", viewport: { width: 1000, height: 1400 } });
       await ctx.addCookies([{ name: "erp_session", value: sessionCookie, url: origin, httpOnly: true, sameSite: "Lax" }]);
       const page = await ctx.newPage();
-      await page.goto(origin + path, { waitUntil: "networkidle", timeout: 30_000 });
+      await page.goto(origin + path, { waitUntil: "load", timeout: 30_000 });
       await page.waitForSelector('[data-ready="1"]', { timeout: 20_000 });
       await page.emulateMedia({ media: "print" });
       // A page may ship its own repeating footer (company data + page numbers) as <template id="pdf-footer">: Chromium prints it in the bottom margin of EVERY page.
@@ -27,5 +27,6 @@ export function renderPdf(origin: string, path: string, sessionCookie: string): 
       return Buffer.from(await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true, displayHeaderFooter: !!footer, headerTemplate: "<span></span>", footerTemplate: footer ?? "<span></span>" }));
     } finally { await browser.close(); }
   };
-  const p = chain.then(run, run); chain = p.catch(() => undefined); return p;
+  const guarded = async () => { try { return await run(); } catch (e) { if (e instanceof AppError) throw e; console.error(JSON.stringify({ level: "error", at: new Date().toISOString(), name: "PdfRenderError", message: String((e as Error)?.message ?? e).slice(0, 300) })); throw new AppError(503, "PDF_FAILED", "تعذّر تشغيل محرك PDF على الخادم (قد يكون غير مثبّت أو الذاكرة غير كافية)"); } };
+  const p = chain.then(guarded, guarded); chain = p.catch(() => undefined); return p;
 }

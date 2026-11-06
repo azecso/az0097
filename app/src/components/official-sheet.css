@@ -50,5 +50,5 @@
 .inv .foot b { color: var(--navy); } .inv .foot .row2 { display: flex; flex-wrap: wrap; gap: 4px 14px; justify-content: center; margin-top: 2px; }
 
 @page inv { size: A4 portrait; margin: 12mm 12mm 30mm 12mm; }
-@media print { .inv { width: auto; min-height: 0; padding: 0; margin: 0; } .inv .foot { display: none; } }   /* in the PDF the footer comes from <template id="pdf-footer"> */
+@media print { .inv { width: auto; min-height: 0; padding: 0; margin: 0; } .inv .foot { display: none; } .inv.fb .foot { display: block; position: static; margin: 8mm 0 0; inset: auto; } .print-note { display: none !important; } }   /* in the PDF the footer comes from <template id="pdf-footer"> */
 @media screen { .inv .foot { position: absolute; bottom: 8mm; inset-inline: 12mm; } .inv .wm { position: absolute; } .inv { box-shadow: 0 2px 14px rgba(0, 0, 0, .12); margin-block: 12px; } }

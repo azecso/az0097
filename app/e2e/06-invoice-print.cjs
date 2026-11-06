@@ -92,5 +92,15 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
     execFileSync("pdftoppm", ["-r", "60", "-f", "1", "-l", "1", "-png", `inv/doc-${name}.pdf`, `inv/doc-${name}`]);
   }
   ok("50 lines span several pages, 1 line fits a single page", results[1] === 1 && results[50] >= 2);
+  // buttons: PDF works; if the server cannot render a PDF the page explains why and falls back to the browser print
+  const bp = await ctx.newPage(); await bp.addInitScript(() => { window.__printed = 0; window.print = () => { window.__printed += 1; }; });
+  await bp.goto(B + `/print/receipt/${rc2.id}`); await bp.waitForSelector("[data-ready='1']");
+  const [dl] = await Promise.all([bp.waitForEvent("download", { timeout: 60000 }), bp.click("button:has-text('تنزيل PDF')")]); const dlp = await dl.path();
+  ok("download button delivers a real PDF file", fs.readFileSync(dlp).slice(0, 5).toString() === "%PDF-" && /\.pdf$/.test(dl.suggestedFilename()));
+  await bp.route("**/api/pdf**", (r) => r.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "PDF_UNAVAILABLE", message: "محرك PDF غير متوفر على الخادم" } }) }));
+  await bp.click("button:has-text('تنزيل PDF')"); await bp.waitForSelector(".print-note", { timeout: 15000 });
+  await bp.waitForFunction(() => window.__printed >= 1, null, { timeout: 5000 }).catch(() => {});
+  ok("when the server cannot make a PDF the page says why and opens the browser print instead", (await bp.textContent(".print-note")).includes("محرك PDF غير متوفر") && (await bp.evaluate(() => window.__printed)) >= 1);
+  await bp.unroute("**/api/pdf**");
   console.log(out.join("\n")); console.log("PAGES " + JSON.stringify(results)); await b.close();
 })().catch((e) => { console.log("SMOKE ERROR " + e.message); process.exit(1); });
