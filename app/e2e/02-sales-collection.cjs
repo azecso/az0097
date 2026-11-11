@@ -4,7 +4,7 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   const b = await chromium.launch(); const out = []; const ok = (n, c) => out.push((c ? "PASS " : "FAIL ") + n);
   const ctx = await b.newContext({ viewport: { width: 1200, height: 900 } }); const p = await ctx.newPage(); const errs = [];
   p.on("pageerror", (e) => errs.push(e.message)); p.on("console", (m) => { if (m.type() === "error" && !/status of 40[139]/.test(m.text())) errs.push(m.text()); });
-  const B = BASE; const wait = (t, ms = 15000) => p.waitForSelector(t, { timeout: ms });
+  const B = BASE; const wait = (t, ms = 15000) => p.waitForSelector(t, { timeout: ms }).catch(async (e) => { console.log("WAIT FAILED", t, "|", (await p.locator(".msg").allTextContents()).join(" ; "), "|", p.url()); throw e; });
   const post = (path, body) => p.evaluate(async ([path, body]) => { const me = await (await fetch("/api/auth/me")).json(); const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json", "x-csrf-token": me.csrf }, body: JSON.stringify(body) }); return r.json(); }, [path, body]);
   await p.goto(B + "/login"); await p.fill("#u", "owner"); await p.fill("#p", "Owner-Smoke-Pass-77"); await p.click("button.primary"); await p.waitForURL(B + "/");
   // master data via UI
@@ -39,7 +39,7 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   await p.click("td button.primary:has-text('ترحيل')"); await p.waitForFunction(() => document.body.textContent.includes("RC-")); ok("receipt into partner custody posted (RC- number)", true);
   await p.goto(B + "/cash"); await wait(".grid .card"); const cashTxt = await p.textContent(".grid"); ok("custody shows 200,000 and is not counted as available cash", cashTxt.includes("200,000") && cashTxt.includes("لا تُحتسب ضمن النقد المتاح"));
   const main = (await p.evaluate(async () => (await (await fetch("/api/cash-accounts")).json()))).find((a) => a.kind === "MAIN_CASH" && a.currency === "IQD").id;
-  await p.selectOption("#f", custody); await p.selectOption("#t", main); await p.fill("#a", "200000"); await p.click("form.card button.primary"); await wait(".msg.ok");
+  await p.selectOption("#f", custody); await p.selectOption("#t", main); await p.fill("#a", "200000"); await p.click("form.card:has(#f) button.primary"); await wait(".msg.ok");
   await p.click("td button.primary:has-text('ترحيل')"); await p.waitForFunction(() => document.body.textContent.includes("TR-"));
   await p.reload(); await wait(".grid .card"); await p.waitForTimeout(500);
   ok("after hand-over: main cash 200,000, custody 0", (await p.textContent(".grid")).match(/200,000/g).length === 1);

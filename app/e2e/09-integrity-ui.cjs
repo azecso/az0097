@@ -1,0 +1,33 @@
+const { chromium } = require("./pw.cjs");
+const BASE = process.env.E2E_BASE || "http://localhost:3100";
+(async () => {
+  const b = await chromium.launch(); const out = []; const ok = (n, c) => out.push((c ? "PASS " : "FAIL ") + n);
+  const p = await (await b.newContext({ viewport: { width: 1200, height: 900 } })).newPage(); const errs = [];
+  p.on("pageerror", (e) => errs.push(e.message)); p.on("console", (m) => { if (m.type() === "error" && !/status of 40[139]/.test(m.text())) errs.push(m.text()); });
+  const call = (method, path, body) => p.evaluate(async ([method, path, body]) => { const me = await (await fetch("/api/auth/me")).json(); const r = await fetch(path, { method, headers: { "content-type": "application/json", "x-csrf-token": me.csrf }, body: body ? JSON.stringify(body) : undefined }); return r.json(); }, [method, path, body]);
+  await p.goto(BASE + "/login"); await p.fill("#u", "owner"); await p.fill("#p", "Owner-Smoke-Pass-77"); await p.click("button.primary"); await p.waitForURL(BASE + "/");
+  const day = new Date().toISOString().slice(0, 10);
+  await call("POST", "/api/fx-rates", { currency: "USD", rateDate: day, rate: "1480" });
+  const cus = (await call("POST", "/api/contacts", { kind: "CUSTOMER", code: "C1", name: "عميل" })).id, sup = (await call("POST", "/api/contacts", { kind: "SUPPLIER", code: "S1", name: "مورد" })).id;
+  const prod = (await call("POST", "/api/products", { code: "P1", name: "سلعة", baseUom: "قطعة", qtyDecimals: 0 })).id;
+  const cash = (await p.evaluate(async () => (await (await fetch("/api/cash-accounts")).json())));
+  const cap = await call("POST", "/api/capital", { kind: "INJECTION", docDate: day, cashAccountId: cash.find((a) => a.kind === "MAIN_CASH" && a.currency === "IQD").id, currency: "IQD", amount: "20000000", reason: "ابتدائي" }); await call("POST", `/api/capital/${cap.id}/approve`, {});
+  const po = await call("POST", "/api/purchases", { supplierId: sup, docDate: day, paymentType: "CASH", cashAccountId: cash.find((a) => a.kind === "MAIN_CASH" && a.currency === "IQD").id, currency: "IQD", lines: [{ productId: prod, uom: "قطعة", qty: "100", unitPrice: "1000" }] }); await call("POST", `/api/purchases/${po.id}/post`);
+  // separate-delivery invoice, collected before delivery
+  const inv = await call("POST", "/api/sales-invoices", { customerId: cus, docDate: day, saleType: "CREDIT", currency: "IQD", deliveryMode: "SEPARATE", lines: [{ productId: prod, uom: "قطعة", qty: "10", unitPrice: "2000" }] }); await call("POST", `/api/sales-invoices/${inv.id}/post`);
+  const rc = await call("POST", "/api/customer-receipts", { customerId: cus, docDate: day, cashAccountId: cash.find((a) => a.kind === "MAIN_CASH" && a.currency === "IQD").id, currency: "IQD", amount: "20000", allocations: [{ invoiceId: inv.id, amount: "20000" }] }); await call("POST", `/api/customer-receipts/${rc.id}/post`);
+  await p.goto(BASE + "/sales/" + inv.id); await p.waitForSelector("[aria-label='تفصيل الفاتورة']");
+  const t = await p.textContent("[aria-label='تفصيل الفاتورة']");
+  ok("invoice breakdown separates invoiced / delivered / collected and shows the advance on undelivered goods", t.includes("20,000") && t.includes("المسلَّم") && t.includes("دفعة مقدّمة"));
+  await p.goto(BASE + "/settings/reconciliation"); await p.waitForSelector("text=كل المطابقات سليمة");
+  ok("reconciliation screen is all green on a clean book", (await p.textContent("body")).includes("ذمم العملاء"));
+  await p.goto(BASE + "/sales/new"); await p.waitForSelector("#cu"); await p.selectOption("#cu", "USD"); await p.waitForSelector("text=100$ =");
+  const hint = await p.textContent("body"); ok("USD invoice form shows what 100$ is in dinars", hint.includes("148,000"));
+  await p.fill("#r", "148"); await p.waitForSelector("text=يختلف عن آخر سعر");
+  ok("a far-off typed rate is warned about (not changed)", (await p.inputValue("#r")) === "148");
+  await p.goto(BASE + "/cash"); await p.fill("#cn", "مصرف الرافدين"); await p.selectOption("#cc", "USD"); await p.click("form.card:has(#cn) button.primary"); await p.waitForSelector(".msg.ok");
+  ok("owner adds a USD bank account", (await p.textContent("body")).includes("مصرف الرافدين"));
+  ok("USD partner custody account exists", (await p.textContent("body")).includes("عهدة نقدية — الشريك USD"));
+  ok("no console/page errors", errs.length === 0); if (errs.length) out.push("  " + errs.slice(0, 3).join(" | "));
+  console.log(out.join("\n")); await b.close();
+})().catch((e) => { console.error("SMOKE ERROR", e.message.split("\n").slice(0, 8).join("\n")); process.exit(1); });
