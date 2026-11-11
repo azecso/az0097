@@ -54,10 +54,10 @@ let P; const ERRS = [];
   ok("profit statement mentions the externally distributed profit without distributing it again", (await p.textContent("body")).includes("1,000"));
   // collecting from the invoice page itself, with the same "no profit" option
   const inv4 = await post("/api/sales-invoices", { customerId: cust.id, docDate: "2026-11-05", saleType: "CREDIT", currency: "IQD", deliveryMode: "WITH_INVOICE", discount: "0", lines: [{ productId: prod.id, uom: "قطعة", qty: "1", unitPrice: "9000", lineDiscount: "0" }] }); await post(`/api/sales-invoices/${inv4.id}/post`, {});
-  await p.goto(B + `/sales/${inv4.id}`); await wait("h2:has-text('تسجيل قبض على هذه الفاتورة')");
-  await p.selectOption(".card:has(h2:has-text('تسجيل قبض')) select", { index: 1 }); await p.fill(".card:has(h2:has-text('تسجيل قبض')) input[inputmode=decimal] >> nth=0", "8000");
-  await p.click("label:has-text('بدون أرباح') input"); await p.fill(".card:has(h2:has-text('تسجيل قبض')) .row >> nth=1 >> input >> nth=0", "ربح سُلّم للشركاء"); await p.waitForFunction(() => document.body.textContent.includes("الباقي من الفاتورة 1,000"));
-  await p.click("button.primary:has-text('قبض')"); await p.waitForFunction(() => document.body.textContent.includes("ربح موزَّع خارج النظام") && document.querySelector(".msg.ok"));
+  await p.goto(B + `/sales/${inv4.id}`); await wait("button:has-text('تسجيل تسديد')"); await p.click("button:has-text('تسجيل تسديد')"); await wait("#pd-a");
+  await p.fill("#pd-a", "8000"); await p.click("[role=dialog] button:has-text('تفاصيل إضافية')"); await p.click("[role=dialog] label:has-text('بدون أرباح') input"); await p.fill("[role=dialog] input[aria-label='ملاحظة']", "ربح سُلّم للشركاء");
+  await p.waitForFunction(() => document.body.textContent.includes("الباقي 1,000"));
+  await p.click("[role=dialog] button.primary:has-text('تسجيل التسديد')"); await p.waitForFunction(() => document.body.textContent.includes("تم تسجيل التسديد"));
   const g4 = await (await ctx.request.get(B + `/api/sales-invoices/${inv4.id}`)).json();
   ok("collecting from the invoice page with «بدون أرباح»: 8,000 cash + 1,000 outside closes the invoice", Number(g4.collected) === 8000 && Number(g4.external) === 1000 && Number(g4.outstanding) === 0);
   // edit a POSTED receipt (same number), then delete an invoice together with its receipt
@@ -69,20 +69,20 @@ let P; const ERRS = [];
   const e5 = await (await ctx.request.get(B + `/api/customer-receipts/${rc5.id}`)).json(); const i5 = await (await ctx.request.get(B + `/api/sales-invoices/${inv5.id}`)).json();
   ok("editing a posted receipt keeps its number, amount 2,500, invoice remaining 1,500", e5.docNo === rno5 && Number(e5.amount) === 2500 && Number(i5.outstanding) === 1500);
   p.on("dialog", (dlg) => void dlg.accept(dlg.type() === "prompt" ? "إدخال خاطئ" : undefined));
-  await p.goto(B + `/sales/${inv5.id}`); await wait("button:has-text('حذف الفاتورة')"); await p.click("button:has-text('حذف الفاتورة')"); await p.waitForURL(B + "/sales");
+  await p.goto(B + `/sales/${inv5.id}`); await wait("button:has-text('إجراءات إضافية')"); await p.click("button:has-text('إجراءات إضافية')"); await p.click("button:has-text('إلغاء الفاتورة')"); await p.waitForURL(B + "/sales");
   const rl = await (await ctx.request.get(B + "/api/customer-receipts")).json();
   ok("deleting an invoice that has a receipt deletes the receipt with it (after confirmation)", rl.find((r) => r.id === rc5.id)?.status === "REVERSED" && !(await (await ctx.request.get(B + "/api/sales-invoices")).json()).some((x) => x.id === inv5.id));
   await p.goto(B + "/sales/receipts"); await wait("h1"); ok("deleted receipts are hidden by default and a box shows them", !(await p.textContent("tbody")).includes(rno5) && (await p.locator("label:has-text('إظهار المحذوفة')").count()) === 1);
   // edit and delete a POSTED invoice from its page: same number, no reversal shown
   const inv3 = await post("/api/sales-invoices", { customerId: cust.id, docDate: "2026-11-05", saleType: "CREDIT", currency: "IQD", deliveryMode: "WITH_INVOICE", discount: "0", lines: [{ productId: prod.id, uom: "قطعة", qty: "1", unitPrice: "5000", lineDiscount: "0" }] }); const posted3 = await post(`/api/sales-invoices/${inv3.id}/post`, {});
-  await p.goto(B + `/sales/${inv3.id}`); await wait("button:has-text('تعديل الفاتورة')");
-  ok("posted invoice page offers edit and delete, and no reversal card", (await p.locator("button:has-text('حذف الفاتورة')").count()) === 1 && !(await p.textContent("body")).includes("عكس الفاتورة"));
-  await p.click("button:has-text('تعديل الفاتورة')"); await p.waitForURL(/\/sales\/new\?edit=/); await p.waitForFunction(() => [...document.querySelectorAll(".row.card input")].some((i) => i.value === "5000"));
+  await p.goto(B + `/sales/${inv3.id}`); await wait("button:has-text('إجراءات إضافية')"); await p.click("button:has-text('إجراءات إضافية')"); await wait("button:has-text('تصحيح الفاتورة')");
+  ok("posted invoice offers correction and cancellation from the extra-actions dialog, with no reversal card", (await p.locator("button:has-text('إلغاء الفاتورة')").count()) === 1 && !(await p.textContent("body")).includes("عكس الفاتورة"));
+  await p.click("button:has-text('تصحيح الفاتورة')"); await p.waitForURL(/\/sales\/new\?edit=/); await p.waitForFunction(() => [...document.querySelectorAll(".row.card input")].some((i) => i.value === "5000"));
   for (const i of await p.locator(".row.card input").all()) if (await i.evaluate((n) => n.value === "1" && n.getAttribute("inputmode") === "decimal")) { await i.fill("3"); break; }
   await p.click("button.primary:has-text('حفظ كمسودة')"); await p.waitForURL((u) => /\/sales\/[0-9a-f-]{36}$/.test(u.pathname) && !u.pathname.endsWith(inv3.id)); await p.waitForFunction(() => document.body.textContent.includes("15,000"));
   ok("editing a posted invoice keeps its number and recomputes the total (3 x 5,000)", (await p.textContent("h1")).includes(posted3.docNo));
   const lst = await (await ctx.request.get(B + "/api/sales-invoices")).json(); ok("the list shows ONE record for that number (old version hidden)", lst.filter((x) => x.docNo === posted3.docNo).length === 1);
-  await p.click("button:has-text('حذف الفاتورة')"); await p.waitForURL(B + "/sales"); await p.waitForFunction((n) => !document.body.textContent.includes(n), posted3.docNo);
+  await p.click("button:has-text('إجراءات إضافية')"); await p.click("button:has-text('إلغاء الفاتورة')"); await p.waitForURL(B + "/sales"); await p.waitForFunction((n) => !document.body.textContent.includes(n), posted3.docNo);
   ok("deleting a posted invoice removes it from the list", true);
   await p.setViewportSize({ width: 390, height: 800 }); await p.goto(B + "/profits"); await wait("h1"); ok("mobile /profits: no horizontal scroll", await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   ok("no console/page errors", errs.length === 0); if (errs.length) out.push("ERRORS: " + errs.slice(0, 4).join(" | "));

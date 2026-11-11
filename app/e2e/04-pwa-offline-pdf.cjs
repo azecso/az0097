@@ -1,4 +1,5 @@
-const { chromium } = require("./pw.cjs"); const fs = require("fs"); const { execSync } = require("child_process");
+const { chromium } = require("./pw.cjs");
+const { pick } = require("./pick.cjs"); const fs = require("fs"); const { execSync } = require("child_process");
 const BASE = process.env.E2E_BASE || "http://localhost:3100";
 const B = BASE, PIN = "482913";
 (async () => {
@@ -43,9 +44,9 @@ const B = BASE, PIN = "482913";
   await A.ctx.setOffline(true);
   await A.p.reload({ waitUntil: "domcontentloaded" }); await wait(A.p, "text=فاتورة بيع جديدة");
   ok("offline: the new-invoice page opens from the cache", true);
-  await wait(A.p, "text=القفل المحلي مغلق"); await A.p.fill("input[aria-label='الرقم السري للقفل المحلي']", PIN); await A.p.click("button:has-text('فتح')"); await A.p.waitForSelector("#c option:has-text('عميل سري الاسم')", { state: "attached", timeout: 15000 });
+  await wait(A.p, "text=القفل المحلي مغلق"); await A.p.fill("input[aria-label='الرقم السري للقفل المحلي']", PIN); await A.p.click("button:has-text('فتح')"); await A.p.locator("#c").click(); await A.p.locator("#c").fill("سري"); await A.p.waitForSelector("[role=option]:has-text('عميل سري الاسم')", { timeout: 15000 });
   ok("offline: customers/products come from the encrypted local cache after unlock", true);
-  await A.p.selectOption("#c", { label: "عميل سري الاسم" }); const sels = await A.p.$$(".row.card select"); await sels[0].selectOption({ index: 1 });
+  await pick(A.p, "#c", "عميل سري الاسم", "سري"); await A.p.locator(".row.card [role=combobox]").first().click(); await A.p.keyboard.press("ArrowDown"); await A.p.locator("[role=option]").first().click();
   const ins = []; for (const i of await A.p.$$(".row.card input")) if ((await i.getAttribute("inputmode")) === "decimal") ins.push(i); await ins[0].fill("8"); await ins[1].fill("3000");
   await A.p.click("button.primary:has-text('حفظ كمسودة')"); await A.p.waitForSelector("text=حُفظت على جهازك مشفّرة"); await A.p.goto(B + "/sync", { waitUntil: "domcontentloaded" }); await wait(A.p, "text=القفل المحلي مغلق"); await A.p.fill("input[aria-label='الرقم السري للقفل المحلي']", PIN); await A.p.click("button:has-text('فتح')"); await wait(A.p, "td:has-text('بانتظار المزامنة')");
   ok("offline sale saved on the device as 'pending sync' (no final number)", (await A.p.textContent("tbody")).includes("بانتظار المزامنة") && !(await A.p.textContent("tbody")).includes("INV-"));
@@ -58,8 +59,8 @@ const B = BASE, PIN = "482913";
   await Bd.p.goto(B + "/sync"); await wait(Bd.p, "#p1"); await Bd.p.fill("#p1", PIN); await Bd.p.fill("#p2", PIN); await Bd.p.click("button:has-text('تفعيل القفل')"); await Bd.p.waitForSelector("text=فُعّل القفل المحلي");
   await Bd.p.waitForTimeout(1500); await Bd.p.evaluate(() => navigator.serviceWorker.ready.then((r) => r.active.postMessage({ type: "WARM" }))); await Bd.p.waitForTimeout(6000);
   await Bd.p.goto(B + "/sales/new"); await wait(Bd.p, "#c"); await Bd.ctx.setOffline(true); await Bd.p.reload({ waitUntil: "domcontentloaded" }); await wait(Bd.p, "text=القفل المحلي مغلق");
-  await Bd.p.fill("input[aria-label='الرقم السري للقفل المحلي']", PIN); await Bd.p.click("button:has-text('فتح')"); await Bd.p.waitForSelector("#c option:has-text('عميل سري الاسم')", { state: "attached", timeout: 15000 });
-  await Bd.p.selectOption("#c", { label: "عميل سري الاسم" }); const sb = await Bd.p.$$(".row.card select"); await sb[0].selectOption({ index: 1 });
+  await Bd.p.fill("input[aria-label='الرقم السري للقفل المحلي']", PIN); await Bd.p.click("button:has-text('فتح')"); await Bd.p.locator("#c").click(); await Bd.p.locator("#c").fill("سري"); await Bd.p.waitForSelector("[role=option]:has-text('عميل سري الاسم')", { timeout: 15000 });
+  await pick(Bd.p, "#c", "عميل سري الاسم", "سري"); await Bd.p.locator(".row.card [role=combobox]").first().click(); await Bd.p.keyboard.press("ArrowDown"); await Bd.p.locator("[role=option]").first().click();
   const ib = []; for (const i of await Bd.p.$$(".row.card input")) if ((await i.getAttribute("inputmode")) === "decimal") ib.push(i); await ib[0].fill("8"); await ib[1].fill("3000"); await Bd.p.click("button.primary:has-text('حفظ كمسودة')"); await Bd.p.waitForSelector("text=حُفظت على جهازك مشفّرة"); await Bd.p.goto(B + "/sync", { waitUntil: "domcontentloaded" }); await wait(Bd.p, "text=القفل المحلي مغلق"); await Bd.p.fill("input[aria-label='الرقم السري للقفل المحلي']", PIN); await Bd.p.click("button:has-text('فتح')");
   await wait(Bd.p, "td:has-text('بانتظار المزامنة')"); ok("device B also saved an 8-unit offline sale of the same 10-unit stock", true);
 

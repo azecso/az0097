@@ -1,4 +1,5 @@
 const { chromium } = require("./pw.cjs");
+const { pick } = require("./pick.cjs");
 const BASE = process.env.E2E_BASE || "http://localhost:3100";
 (async () => {
   const b = await chromium.launch(); const out = []; const ok = (n, c) => out.push((c ? "PASS " : "FAIL ") + n);
@@ -9,12 +10,12 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   await p.goto(B + "/contacts"); await wait("#c"); await p.fill("#c", "S1"); await p.fill("#n", "مورد الجملة"); await p.click("form.card button.primary"); await wait(".msg.ok"); ok("supplier created", true);
   await p.goto(B + "/inventory/products"); await wait("#c"); await p.fill("#c", "WTR"); await p.fill("#n", "مياه معدنية"); await p.fill("#u", "كارتون=12"); await p.fill("#p", "500"); await p.click("form.card button.primary"); await wait(".msg.ok");
   ok("product with per-product carton factor", (await p.textContent("tbody")).includes("كارتون=12"));
-  await p.goto(B + "/purchases/new"); await wait("#s"); await p.selectOption("#s", { label: "مورد الجملة" }); await p.selectOption("#t", "CREDIT");
-  const sels = await p.$$(".row.card select"); await sels[0].selectOption({ index: 1 }); await sels[1].selectOption("كارتون");
+  await p.goto(B + "/purchases/new"); await wait("#s"); await pick(p, "#s", "مورد الجملة"); await p.selectOption("#t", "CREDIT");
+  await pick(p, p.locator(".row.card [role=combobox]").first(), "WTR"); const sels = await p.$$(".row.card select"); await sels[0].selectOption("كارتون");
   const ins = []; for (const i of await p.$$(".row.card input")) if ((await i.getAttribute("inputmode")) === "decimal") ins.push(i); await ins[0].fill("2"); await ins[1].fill("6000");
   await p.click("button.primary:has-text('حفظ كمسودة')"); await p.waitForURL(/\/purchases\/[0-9a-f-]{36}/); await wait("h1");
   ok("draft saved with DRAFT number and status", (await p.textContent("h1")).includes("DRAFT-") && (await p.textContent("h1")).includes("مسودة"));
-  await p.click("button.primary:has-text('ترحيل')"); await wait(".msg.ok"); await p.waitForFunction(() => document.querySelector("h1").textContent.includes("PO-"));
+  await p.click("button.primary:has-text('اعتماد')"); await wait(".msg.ok"); await p.waitForFunction(() => document.querySelector("h1").textContent.includes("PO-"));
   const h1 = await p.textContent("h1"); ok("posting assigns final number + POSTED", /PO-\d{4}-000001/.test(h1) && h1.includes("مرحّل"));
   ok("posted invoice hides delete-draft", (await p.$$("button:has-text('حذف المسودة')")).length === 0);
   ok("outstanding shows 12,000 payable", (await p.textContent(".card.grid")).includes("12,000"));

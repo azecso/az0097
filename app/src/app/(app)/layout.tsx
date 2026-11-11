@@ -8,17 +8,20 @@ import { useOffline } from "@/lib/offline/use";
 import { unlockVault, vaultStatus, wipeVault } from "@/lib/offline/vault";
 
 
-const NAV = [
-  { href: "/", label: "لوحة التحكم" },
-  { href: "/sales", label: "المبيعات", perm: "sales:view" }, { href: "/purchases", label: "المشتريات", perm: "purchase:view" }, { href: "/cash", label: "النقدية والعهدة", perm: "voucher:view" }, { href: "/contacts", label: "العملاء والموردون", perm: "contacts:view" },
-  { href: "/inventory/products", label: "المواد", perm: "products:view" }, { href: "/inventory/stock", label: "المخزون", perm: "products:view" },
-  { href: "/inventory/transfers", label: "تحويل المخزون", perm: "stock_transfer:view" }, { href: "/inventory/counts", label: "الجرد", perm: "inventory_count:view" },
-  { href: "/expenses", label: "المصاريف", perm: "expense:view" }, { href: "/payroll", label: "الرواتب", perm: "payroll:view" }, { href: "/reports", label: "التقارير", perm: "report:view" }, { href: "/capital/returns", label: "إرجاع رأس المال", perm: "capital:view" }, { href: "/capital", label: "رأس المال والسحوبات", perm: "capital:view" },
-  { href: "/profits", label: "الأرباح والتوزيع", perm: "profit_settlement:view" }, { href: "/partners", label: "الشراكة والتسويات", perm: "profit_settlement:view" },
-  { href: "/accounting", label: "المحاسبة", perm: "journal:view" }, { href: "/accounting/opening", label: "الأرصدة الافتتاحية", perm: "opening_balance:view" }, { href: "/accounting/periods", label: "إقفال الفترات", perm: "period_close:view" },
-  { href: "/sync", label: "المزامنة والعمل أوفلاين" }, { href: "/settings/company", label: "الشركة" }, { href: "/settings/fx", label: "أسعار الصرف", perm: "fx_rate:view" },
-  { href: "/settings/users", label: "المستخدمون والصلاحيات", owner: true }, { href: "/settings/security", label: "الأمان (2FA)", owner: true }, { href: "/settings/reconciliation", label: "مطابقة الدفاتر", owner: true }, { href: "/settings/reset", label: "تصفير البيانات", owner: true }, { href: "/settings/backup", label: "سلامة البيانات والنسخ", owner: true }, { href: "/settings/audit", label: "سجل التدقيق", perm: "audit:view" },
+type NavItem = { href: string; label: string; perm?: string; owner?: boolean };
+/** Grouped like an ERP menu: Sales / Purchases / Inventory / Cash / Partnership / Accounting / Reports / Settings. */
+const GROUPS: { title: string; items: NavItem[] }[] = [
+  { title: "", items: [{ href: "/", label: "لوحة التحكم" }] },
+  { title: "المبيعات", items: [{ href: "/sales", label: "فواتير المبيعات", perm: "sales:view" }, { href: "/sales/quotes", label: "عروض الأسعار", perm: "sales:view" }, { href: "/sales/receipts", label: "سندات القبض", perm: "voucher:view" }, { href: "/sales/deliveries", label: "سندات التسليم", perm: "sales:view" }, { href: "/sales/returns", label: "مرتجعات المبيعات", perm: "sales:view" }, { href: "/contacts", label: "العملاء والموردون", perm: "contacts:view" }] },
+  { title: "المشتريات", items: [{ href: "/purchases", label: "فواتير المشتريات", perm: "purchase:view" }, { href: "/purchases/payments", label: "سندات الصرف", perm: "voucher:view" }] },
+  { title: "المخزون", items: [{ href: "/inventory/products", label: "المواد", perm: "products:view" }, { href: "/inventory/stock", label: "أرصدة المخزون", perm: "products:view" }, { href: "/inventory/transfers", label: "تحويل المخزون", perm: "stock_transfer:view" }, { href: "/inventory/counts", label: "الجرد", perm: "inventory_count:view" }] },
+  { title: "النقدية", items: [{ href: "/cash", label: "النقدية والعهدة", perm: "voucher:view" }, { href: "/cash/movements", label: "حركة النقد", perm: "voucher:view" }, { href: "/expenses", label: "المصاريف", perm: "expense:view" }, { href: "/payroll", label: "الرواتب", perm: "payroll:view" }] },
+  { title: "الشراكة", items: [{ href: "/profits", label: "الأرباح والتوزيع", perm: "profit_settlement:view" }, { href: "/partners", label: "الشراكة والتسويات", perm: "profit_settlement:view" }, { href: "/capital", label: "رأس المال والسحوبات", perm: "capital:view" }, { href: "/capital/returns", label: "إرجاع رأس المال (سجل معلوماتي)", perm: "capital:view" }] },
+  { title: "المحاسبة", items: [{ href: "/accounting", label: "القيود والميزان", perm: "journal:view" }, { href: "/accounting/opening", label: "الأرصدة الافتتاحية", perm: "opening_balance:view" }, { href: "/accounting/periods", label: "إقفال الفترات", perm: "period_close:view" }, { href: "/settings/reconciliation", label: "مطابقة الدفاتر", owner: true }] },
+  { title: "التقارير", items: [{ href: "/reports", label: "كل التقارير", perm: "report:view" }, { href: "/reports/profit-loss", label: "الأرباح والخسائر", perm: "report:view" }, { href: "/reports/balance-sheet", label: "المركز المالي", perm: "report:view" }, { href: "/reports/trial-balance", label: "ميزان المراجعة", perm: "report:view" }] },
+  { title: "الإعدادات", items: [{ href: "/settings/company", label: "الشركة" }, { href: "/settings/fx", label: "أسعار الصرف", perm: "fx_rate:view" }, { href: "/settings/users", label: "المستخدمون والصلاحيات", owner: true }, { href: "/settings/security", label: "الأمان (2FA)", owner: true }, { href: "/settings/backup", label: "سلامة البيانات والنسخ", owner: true }, { href: "/settings/audit", label: "سجل التدقيق", perm: "audit:view" }, { href: "/sync", label: "المزامنة والعمل أوفلاين" }, { href: "/settings/reset", label: "تصفير البيانات", owner: true }] },
 ];
+const NAV: NavItem[] = GROUPS.flatMap((g) => g.items);
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   // Give every table cell its column title so the phone layout (one card per row) can show "what is this number".
@@ -72,8 +75,13 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   if (!me) return <main className="login"><div className="card" style={{ textAlign: "center" }}><p>{bootError ? `تعذّر الاتصال: ${bootError}` : "جارٍ التحميل…"}</p>
     {(slow || bootError) && <><p style={{ color: "var(--muted)" }}>{health || "جارٍ فحص الخادم…"}</p><p style={{ fontSize: 13, color: "var(--muted)" }}>الاستضافات المجانية تنام عند عدم الاستخدام وتحتاج حتى دقيقة للاستيقاظ. إن استمرت المشكلة راجع سجلات الخدمة.</p>
       <button className="primary" onClick={() => { setSlow(false); setHealth(""); void loadMe(); }}>إعادة المحاولة</button></>}</div></main>;
-  const items = NAV.filter((n) => (!n.owner || me.user.isOwner) && (!n.perm || can(me, n.perm)));
-  const nav = items.map((n) => <Link key={n.href} href={n.href} aria-current={path === n.href || (n.href !== "/" && path.startsWith(n.href + "/")) ? "page" : undefined}>{n.label}</Link>);
+  const allowed = (n: NavItem) => (!n.owner || me.user.isOwner) && (!n.perm || can(me, n.perm));
+  const items = NAV.filter(allowed);
+  const link = (n: NavItem) => <Link key={n.href} href={n.href} aria-current={path === n.href ? "page" : undefined}>{n.label}</Link>;
+  const build = (allOpen: boolean) => GROUPS.map((g) => ({ ...g, items: g.items.filter(allowed) })).filter((g) => g.items.length).map((g) => g.title
+    ? <details key={g.title} open={allOpen || g.items.some((n) => path === n.href || path.startsWith(n.href + "/") && n.href !== "/")} className="navgroup"><summary>{g.title}</summary>{g.items.map(link)}</details>
+    : <div key="top">{g.items.map(link)}</div>);
+  const nav = build(false), drawerNav = build(true);
   return (
     <MeCtx.Provider value={me}>
       <div className="shell">
@@ -98,7 +106,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </div>
         <nav className="tabbar" aria-label="تنقل سريع">{items.slice(0, 4).map((n) => <Link key={n.href} href={n.href}>{n.label}</Link>)}
           <button type="button" className="tabmore" aria-expanded={menuOpen} aria-controls="phone-menu" onClick={() => setMenuOpen((v) => !v)}>{menuOpen ? "✕ إغلاق" : "☰ القائمة"}</button></nav>
-        {menuOpen && <div className="drawer" id="phone-menu" role="dialog" aria-label="كل الأقسام"><strong style={{ display: "block", padding: "8px 4px 12px", fontSize: 18 }}>كل الأقسام</strong>{nav}</div>}
+        {menuOpen && <div className="drawer" id="phone-menu" role="dialog" aria-label="كل الأقسام"><strong style={{ display: "block", padding: "8px 4px 12px", fontSize: 18 }}>كل الأقسام</strong>{drawerNav}</div>}
       </div>
     </MeCtx.Provider>
   );

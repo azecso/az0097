@@ -6,12 +6,13 @@ import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
 import { Attach } from "@/components/attach";
+import { PayPurchaseDialog } from "@/components/pay-dialog";
 
 interface Line { id: string; lineNo: number; productCode: string; productName: string; uom: string; qty: string; qtyBase: string; unitPrice: string; lineTotal: string; lineTotalBase: string }
 interface Doc { id: string; docNo: string | null; draftRef: string; docDate: string; supplierName: string; paymentType: string; currency: string; exchangeRate: string; total: string; totalBase: string; status: string; version: number; lines: Line[]; charges: { kind: string; description: string | null; amount: string; capitalize: boolean }[]; paid?: string; returned?: string; outstanding?: string; supplierInvoiceNo: string | null; cashAccountId: string | null }
 export default function PurchaseView() {
   const { id } = useParams<{ id: string }>(); const router = useRouter(); const me = useMe();
-  const { data: d, reload, err } = useLoad<Doc | null>(`/api/purchases/${id}`, null); const { msg, busy, run } = useAction(reload);
+  const { data: d, reload, err } = useLoad<Doc | null>(`/api/purchases/${id}`, null); const { msg, busy, run, setMsg } = useAction(reload); const [payOpen, setPayOpen] = useState(false);
   const [reason, setReason] = useState(""); const [ret, setRet] = useState<Record<string, string>>({}); const [exc, setExc] = useState("");
   if (!d) return <p>{err || "جارٍ التحميل…"}</p>;
   const posted = d.status === "POSTED";
@@ -31,11 +32,15 @@ export default function PurchaseView() {
     {d.charges.length > 0 && <div className="card" style={{ marginTop: 12 }}><h2>تكاليف إضافية</h2><table><tbody>{d.charges.map((c, i) => <tr key={i}><td>{{ TRANSPORT: "نقل", LOADING: "تحميل", CUSTOMS: "جمارك", OTHER: "أخرى" }[c.kind]} {c.description}</td><td><span className="num">{money(c.amount)} {d.currency}</span></td><td>{c.capitalize ? "ضمن كلفة المخزون" : "مصروف"}</td></tr>)}</tbody></table></div>}
     <MsgBox msg={msg} />
     <p style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-      {d.status === "DRAFT" && can(me, "purchase:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/purchases/${id}/post`, { method: "POST" }), "تم الترحيل وإصدار الرقم النهائي")}>ترحيل</button>}
+      {d.status === "DRAFT" && can(me, "purchase:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/purchases/${id}/post`, { method: "POST" }), "تم الترحيل وإصدار الرقم النهائي")}>اعتماد</button>}
+      {posted && <span style={{ display: "inline-flex", flexDirection: "column", gap: 2 }}><button type="button" className="primary" onClick={() => setPayOpen(true)}
+        disabled={d.paymentType !== "CREDIT" || Number(d.outstanding ?? 0) <= 0 || !can(me, "voucher:create") || !can(me, "voucher:approve")}>تسجيل دفعة</button>
+        {(d.paymentType !== "CREDIT" || Number(d.outstanding ?? 0) <= 0 || !can(me, "voucher:create") || !can(me, "voucher:approve")) && <small>{d.paymentType !== "CREDIT" ? "فاتورة نقدية؛ لا يوجد مستحق" : Number(d.outstanding ?? 0) <= 0 ? "مسدَّدة بالكامل" : "لا تملك صلاحية سندات الصرف"}</small>}</span>}
       <a href={`/print/purchase/${id}`} target="_blank" rel="noreferrer"><button>طباعة / PDF</button></a>
       {d.status === "DRAFT" && can(me, "purchase:edit_draft") && <Link href={`/purchases/new?edit=${id}`}><button>✏️ تعديل</button></Link>}
       {d.status === "DRAFT" && can(me, "purchase:edit_draft") && <button className="danger" disabled={busy} onClick={async () => { if (await run(() => api(`/api/purchases/${id}`, { method: "DELETE" }), "حُذفت المسودة")) router.push("/purchases"); }}>حذف المسودة</button>}
     </p>
+    {payOpen && <PayPurchaseDialog purchaseId={id} supplierName={d.supplierName} docNo={d.docNo ?? d.draftRef} currency={d.currency} remaining={d.outstanding ?? "0"} onClose={() => setPayOpen(false)} onDone={(m) => { setPayOpen(false); setMsg({ t: "ok", m }); void reload(); }} />}
     <Attach entityType="purchase_order" entityId={id} label="صور فاتورة المورد والإيصالات" />
     {posted && can(me, "purchase:cancel") && <div className="card" style={{ marginTop: 12 }}><h2>حذف الفاتورة</h2><p>لا يُعدَّل المستند المرحّل؛ يُنشأ قيد عكسي بالسبب أدناه.</p>
       <div className="row"><div><label htmlFor="rs">السبب</label><input id="rs" value={reason} onChange={(e) => setReason(e.target.value)} /></div>

@@ -10,7 +10,7 @@ function Inner() {
   const { data: r, co, err } = usePrint<RResult>(`/api/reports2/${id}${qs ? `?${qs}` : ""}`);
   if (!r) return <Loading err={err} />;
   const info: [string, string | null, boolean?][] = [["بتاريخ", new Date().toISOString().slice(0, 10), true], ...Object.entries(r.filters).map(([k, v]) => [k, v, true] as [string, string, boolean])];
-  return (<OfficialSheet co={co} who={who} title={r.title} titleEn="REPORT" pdfPath={`/print/report/${id}${qs ? `?${qs}` : ""}`} leftLabel="المراجعة والاعتماد" wide
+  return (<OfficialSheet co={co} who={who} title={r.title} titleEn="REPORT" pdfPath={`/print/fin/${id}${qs ? `?${qs}` : ""}`} leftLabel="المراجعة والاعتماد" wide
     boxes={<Dl title="بيانات التقرير" rows={info.filter((x) => x[1]) as [string, string, boolean?][]} />}
     final={<p style={{ fontSize: 12 }}>{r.definition} {r.notes.join(" • ")}</p>}>
     <table className="items"><thead><tr>{r.columns.map((c: RCol) => <th key={c.key}>{c.label}</th>)}</tr></thead>

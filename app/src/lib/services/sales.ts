@@ -167,7 +167,10 @@ export async function getInvoice(tx: Tx, id: string) {
     breakdown = { invoiced: f.net, deliveredValue: d(delivered).toDecimalPlaces(4).toString(), deliveredRatio: profit.deliveredRatio, collected: f.collected, external: f.external, remaining: f.outstanding,
       advanceOnUndelivered: Decimal.max(paid.minus(delivered), 0).toDecimalPlaces(4).toString(), eligibleProfitBase: profit.linkedProfitBase };
   }
-  return { ...h, lines, ...fin, cogsBase: cogs, profit, breakdown };
+  const receipts = h.status === "DRAFT" ? [] : await tx`SELECT r.id, r.doc_no AS "docNo", r.doc_date::text AS "docDate", r.currency, r.settlement_rate::text AS "settlementRate", r.auto_for_invoice_id IS NOT NULL AS auto,
+      COALESCE(sum(a.amount) FILTER (WHERE NOT a.external), 0)::text AS amount, COALESCE(sum(a.amount) FILTER (WHERE a.external), 0)::text AS external
+    FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id WHERE a.invoice_id = ${id} AND r.status = 'POSTED' GROUP BY r.id ORDER BY r.doc_date, r.created_at`;
+  return { ...h, lines, ...fin, cogsBase: cogs, profit, breakdown, receipts };
 }
 
 /** Posting: revenue/AR (+discount) entry; goods issue (COGS by FIFO) with the invoice or later; a CASH sale also records its receipt. One transaction. */

@@ -11,20 +11,21 @@ let P; const BASE = process.env.E2E_BASE || "http://localhost:3100";
 
   // 1) create the supplier and the product from inside the purchase form
   await p.goto(B + "/purchases/new"); await wait("#s");
-  const sup = p.locator(".pick").nth(0); await sup.locator("button:has-text('جديد')").click();
-  await sup.locator("input[name=nm]").fill("مورد سريع"); await sup.locator("input[name=ph]").fill("07701234567"); await sup.locator("button:has-text('حفظ واختيار')").click();
-  await p.waitForFunction(() => { const s = document.querySelector("#s"); return s && s.selectedOptions[0] && s.selectedOptions[0].textContent === "مورد سريع"; });
+  await p.locator("#s").click(); await p.locator("#s").fill("مورد سريع"); await p.locator("[role=option]:has-text('إنشاء')").click();
+  ok("typing a missing name offers «إنشاء» and opens a small dialog pre-filled with the typed name", (await p.inputValue("#pc-nm")) === "مورد سريع");
+  await p.fill("#pc-ph", "07701234567"); await p.click("button:has-text('حفظ واختيار')");
+  await p.waitForFunction(() => document.querySelector("#s").value === "مورد سريع");
   ok("new supplier created inside the invoice form and auto-selected", true); await p.selectOption("#t", "CREDIT");
-  const prod = p.locator(".pick").nth(1); await prod.locator("button:has-text('جديد')").click();
-  await prod.locator("input[name=nm]").fill("سكر ناعم"); await prod.locator("input[name=code]").fill("SGR"); await prod.locator("button:has-text('حفظ واختيار')").click();
-  await p.waitForFunction(() => [...document.querySelectorAll("select")].some((s) => s.selectedOptions[0] && s.selectedOptions[0].textContent.includes("سكر ناعم")));
+  const prodBox = p.locator(".row.card [role=combobox]").first(); await prodBox.click(); await prodBox.fill("سكر ناعم"); await p.locator("[role=option]:has-text('إنشاء')").click();
+  await p.click("button:has-text('تفاصيل إضافية')"); await p.fill("#pc-cd", "SGR"); await p.click("button:has-text('حفظ واختيار')");
+  await p.waitForFunction(() => [...document.querySelectorAll("[role=combobox]")].some((i) => i.value.includes("سكر ناعم")));
   ok("new product created inside the line and auto-selected", true);
   await p.waitForFunction(() => [...document.querySelectorAll("select")].some((s) => [...s.options].some((o) => o.textContent === "قطعة")));
   ok("the new product's unit is available at once", true);
   const ins = await p.$$(".row.card input"); const nums = []; for (const i of ins) { if ((await i.getAttribute("inputmode")) === "decimal" && !(await i.getAttribute("name"))) nums.push(i); }
   await nums[0].fill("10"); await nums[1].fill("2500");
   await p.click("button.primary:has-text('حفظ كمسودة')"); await p.waitForURL(/\/purchases\/[0-9a-f-]{36}/); await wait("h1");
-  await p.click("button.primary:has-text('ترحيل')"); await wait(".msg.ok"); await p.waitForFunction(() => document.querySelector("h1").textContent.includes("PO-"));
+  await p.click("button.primary:has-text('اعتماد')"); await wait(".msg.ok"); await p.waitForFunction(() => document.querySelector("h1").textContent.includes("PO-"));
   ok("invoice with the freshly created supplier/product posts", true);
 
   // navigation + correction flow (list row opens document, back button, reverse+copy, edit draft, re-post)
@@ -41,14 +42,14 @@ let P; const BASE = process.env.E2E_BASE || "http://localhost:3100";
   for (const i of await p.$$(".row.card input")) if (await i.evaluate((n) => n.value === "10")) { await i.fill("12"); break; }
   await p.click("button.primary:has-text('حفظ كمسودة')"); await p.waitForURL(/\/purchases\/[0-9a-f-]{36}$/); await p.waitForFunction(() => document.body.textContent.includes("30,000"));
   ok("editing the draft saves the new quantity (12 x 2,500 = 30,000)", true);
-  await p.click("button.primary:has-text('ترحيل')"); await p.waitForFunction(() => document.querySelector("h1").textContent.includes("PO-")); ok("the corrected invoice posts", true);
+  await p.click("button.primary:has-text('اعتماد')"); await p.waitForFunction(() => document.querySelector("h1").textContent.includes("PO-")); ok("the corrected invoice posts", true);
   await p.goto(B + "/purchases"); await wait("tfoot tr"); const lst = await p.textContent(".card");
   ok("list shows the payment state and a totals row under the amount column", lst.includes("غير مسددة") && lst.includes("المجموع") && lst.includes("30,000"));
 
   // 2) expense category quick-create
   await p.goto(B + "/expenses"); await wait("#c");
-  const cat = p.locator(".pick").nth(0); await cat.locator("button:has-text('جديد')").click(); await cat.locator("input[name=nm]").fill("قرطاسية"); await cat.locator("button:has-text('حفظ واختيار')").click();
-  await p.waitForFunction(() => { const s = document.querySelector("#c"); return s && s.selectedOptions[0] && s.selectedOptions[0].textContent === "قرطاسية"; });
+  await p.locator("#c").click(); await p.locator("#c").fill("قرطاسية"); await p.locator("[role=option]:has-text('إنشاء')").click(); await p.click("button:has-text('حفظ واختيار')");
+  await p.waitForFunction(() => document.querySelector("#c").value === "قرطاسية");
   ok("expense category created in place and selected", true);
 
   // 3) capital-return register
@@ -81,7 +82,7 @@ let P; const BASE = process.env.E2E_BASE || "http://localhost:3100";
   await p.screenshot({ path: "mobile-purchases.png", fullPage: true });
   await p.click("button.tabmore"); await p.waitForSelector("#phone-menu a:has-text('التقارير')");
   const links = await p.$$eval("#phone-menu a", (a) => a.map((x) => x.textContent));
-  ok("phone menu lists every section the user may open (reports, expenses, partners, inventory...)", ["التقارير", "المصاريف", "المخزون", "الشراكة والتسويات", "المحاسبة"].every((t) => links.includes(t)));
+  ok("phone menu lists every section the user may open (reports, expenses, partners, inventory...)", ["كل التقارير", "المصاريف", "أرصدة المخزون", "الشراكة والتسويات", "القيود والميزان"].every((t) => links.includes(t)));
   await p.screenshot({ path: "mobile-menu.png" });
   await p.click("#phone-menu a:has-text('التقارير')"); await p.waitForURL(/\/reports/); await p.waitForSelector("h1:has-text('التقارير')");
   ok("choosing a section navigates and closes the menu", (await p.$$("#phone-menu")).length === 0);

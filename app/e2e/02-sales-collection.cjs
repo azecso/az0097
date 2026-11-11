@@ -1,4 +1,5 @@
 const { chromium } = require("./pw.cjs");
+const { pick } = require("./pick.cjs");
 const BASE = process.env.E2E_BASE || "http://localhost:3100";
 (async () => {
   const b = await chromium.launch(); const out = []; const ok = (n, c) => out.push((c ? "PASS " : "FAIL ") + n);
@@ -17,8 +18,8 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   const buy = await post("/api/purchases", { supplierId: sup, docDate: "2026-11-01", paymentType: "CREDIT", currency: "IQD", lines: [{ productId: prods[0].id, uom: "قطعة", qty: "100", unitPrice: "7000" }] });
   await post(`/api/purchases/${buy.id}/post`, {});
   // sale through the UI
-  await p.goto(B + "/sales/new"); await wait("#c"); await p.selectOption("#c", { label: "عميل الجملة" });
-  const sels = await p.$$(".row.card select"); await sels[0].selectOption({ index: 1 });
+  await p.goto(B + "/sales/new"); await wait("#c"); await pick(p, "#c", "عميل الجملة");
+  await pick(p, p.locator(".row.card [role=combobox]").first(), "P1");
   const ins = []; for (const i of await p.$$(".row.card input")) if ((await i.getAttribute("inputmode")) === "decimal") ins.push(i); await ins[0].fill("100"); await ins[1].fill("10000");
   await p.click("button.primary:has-text('حفظ كمسودة')"); await p.waitForURL(/\/sales\/[0-9a-f-]{36}/); await wait("h1");
   ok("sales draft has DRAFT ref", (await p.textContent("h1")).includes("DRAFT-"));
@@ -27,7 +28,7 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   ok("sales draft opens for editing with customer, quantity and price prefilled", true);
   await p.click("button.primary:has-text('حفظ كمسودة')"); await p.waitForURL(/\/sales\/[0-9a-f-]{36}$/); await p.waitForFunction(() => document.body.textContent.includes("1,000,000"));
   ok("saving the edit keeps the draft and its total", (await p.textContent("h1")).includes("DRAFT-"));
-  await p.click("button.primary:has-text('ترحيل')"); await p.waitForFunction(() => document.querySelector("h1").textContent.includes("INV-")); await wait(".card.grid .label");
+  await p.click("button.primary:has-text('اعتماد')"); await p.waitForFunction(() => document.querySelector("h1").textContent.includes("INV-")); await wait(".card.grid .label");
   const g = await p.textContent(".card.grid");
   ok("invoice posted: net 1,000,000 and outstanding 1,000,000", g.includes("1,000,000") && g.includes("المتبقي"));
   ok("gross profit 300,000 (cost 700,000 via FIFO delivery)", g.includes("300,000"));
@@ -44,12 +45,12 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   await p.reload(); await wait(".grid .card"); await p.waitForTimeout(500);
   ok("after hand-over: main cash 200,000, custody 0", (await p.textContent(".grid")).match(/200,000/g).length === 1);
   // return 30 pieces
-  await p.goto(B + "/sales/" + invId); await wait("h1"); await p.waitForSelector("text=مرتجع من العميل");
-  await p.fill(".card:has(h2:has-text('مرتجع')) input[dir='ltr']", "30"); await p.fill(".card:has(h2:has-text('مرتجع')) .row:last-of-type input", "بضاعة غير مطابقة");
-  await p.click("button:has-text('إنشاء وترحيل المرتجع')"); await p.waitForFunction(() => document.body.textContent.includes("تم ترحيل المرتجع"));
-  await p.reload(); await wait(".card.grid"); const g2 = await p.textContent(".card.grid");
+  await p.goto(B + "/sales/" + invId); await wait("h1"); await p.click("button:has-text('مرتجع')");
+  await p.fill("[role=dialog] input[dir='ltr']", "30"); await p.fill("#rt-r", "بضاعة غير مطابقة");
+  await p.click("button:has-text('اعتماد المرتجع')"); await p.waitForFunction(() => document.body.textContent.includes("تم اعتماد المرتجع"));
+  await p.reload(); await wait(".card.grid .label"); const g2 = await p.textContent(".card.grid");
   ok("after return: outstanding 500,000 (1,000,000 - 200,000 - 300,000)", g2.includes("500,000"));
-  ok("linked profit now 120,000 (calc: 210,000 x 200/700)", g2.includes("60,000") || g2.includes("120,000"));
+  ok("profit eligible for distribution stays 0 while the invoice is not fully paid (policy: paid AND delivered in full)", /الربح المؤهَّل للتوزيع\s*0/.test(g2.replace(/\s+/g, " ")) || g2.includes("يتحقق عند التسديد والتسليم الكاملين"));
   // reports
   await p.goto(B + "/inventory/stock"); await wait("text=✔ متطابق"); ok("inventory still reconciles with ledger", true);
   await p.goto(B + "/accounting"); await wait("text=✔ متوازن"); ok("trial balance balanced", true);

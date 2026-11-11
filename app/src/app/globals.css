@@ -84,3 +84,7 @@ table { width: 100%; border-collapse: collapse; } th, td { text-align: start; pa
 @media (min-width: 801px) { .tabmore { display: none; } }
 .print-note { padding: 8px 16px; background: #fff4da; color: #6b4a00; border-bottom: 1px solid #e3c987; font-size: 13px; }
 .print-bar button:disabled { opacity: .6; cursor: wait; }
+.navgroup { display: flex; flex-direction: column; } .navgroup > summary { cursor: pointer; padding: 10px 12px; font-weight: 700; color: var(--muted); list-style: none; border-radius: 10px; min-height: 44px; display: flex; align-items: center; }
+.navgroup > summary::before { content: "▸"; margin-inline-end: 8px; } .navgroup[open] > summary::before { content: "▾"; }
+.navgroup > a { padding-inline-start: 28px; }
+.drawer .navgroup > summary { padding: 14px 12px; font-size: 16px; }

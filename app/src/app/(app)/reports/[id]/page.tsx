@@ -24,7 +24,7 @@ function Inner() {
           : k === "productId" ? <select id={`f-${k}`} value={sp.get(k) ?? ""} onChange={(e) => set(k, e.target.value)}><option value="">الكل</option>{prods.map((c) => <option key={c.id} value={c.id}>{c.code} — {c.name}</option>)}</select>
           : k === "currency" ? <select id={`f-${k}`} value={sp.get(k) ?? ""} onChange={(e) => set(k, e.target.value)}><option value="">الكل</option><option>IQD</option><option>USD</option></select>
           : <input id={`f-${k}`} value={sp.get(k) ?? ""} onChange={(e) => set(k, e.target.value)} dir="ltr" />}</div>)}
-      <a className="btn" href={`/api/export-report/${id}${qs ? `?${qs}` : ""}`}>⬇ Excel</a><a className="btn" href={`/print/report/${id}${qs ? `?${qs}` : ""}`} target="_blank" rel="noreferrer">🖨 طباعة / PDF</a></div>
+      <a className="btn" href={`/api/export-report/${id}${qs ? `?${qs}` : ""}`}>⬇ Excel</a><a className="btn" href={`/print/fin/${id}${qs ? `?${qs}` : ""}`} target="_blank" rel="noreferrer">🖨 طباعة / PDF</a></div>
     {res.err && <div className="msg err">{res.err}</div>}
     {r && <div className="card cards-as-list" style={{ marginTop: 12 }}>
       {r.notes.length > 0 && <p><small>{r.notes.join(" • ")}</small></p>}
