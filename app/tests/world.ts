@@ -33,6 +33,9 @@ export async function makeWorld(): Promise<World> {
   R.paymentId = await imp("@/app/api/supplier-payments/[id]/route");
   R.paymentPost = (await imp("@/app/api/supplier-payments/[id]/post/route")).POST;
   R.paymentReverse = (await imp("@/app/api/supplier-payments/[id]/reverse/route")).POST;
+  R.purchaseAmend = (await imp("@/app/api/purchases/[id]/amend/route")).POST;
+  R.paymentAmend = (await imp("@/app/api/supplier-payments/[id]/amend/route")).POST;
+  R.paymentEdit = (await imp("@/app/api/supplier-payments/[id]/edit/route")).GET;
   R.transfers = await imp("@/app/api/stock-transfers/route");
   R.transferPost = (await imp("@/app/api/stock-transfers/[id]/post/route")).POST;
   R.transferReverse = (await imp("@/app/api/stock-transfers/[id]/reverse/route")).POST;

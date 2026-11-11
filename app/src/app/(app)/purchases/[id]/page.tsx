@@ -45,7 +45,8 @@ export default function PurchaseView() {
     {posted && can(me, "purchase:cancel") && <div className="card" style={{ marginTop: 12 }}><h2>حذف الفاتورة</h2><p>لا يُعدَّل المستند المرحّل؛ يُنشأ قيد عكسي بالسبب أدناه.</p>
       <div className="row"><div><label htmlFor="rs">السبب</label><input id="rs" value={reason} onChange={(e) => setReason(e.target.value)} /></div>
         <button className="danger" disabled={busy || reason.length < 3} onClick={() => run(() => api(`/api/purchases/${id}/reverse`, { method: "POST", body: { reason } }), "تم عكس المستند")}>حذف</button>
-        <button disabled={busy || reason.length < 3} title="يعكس الفاتورة ثم يفتح نسخة جديدة منها للتعديل" onClick={async () => { const r = await run(() => api(`/api/purchases/${id}/reverse`, { method: "POST", body: { reason } }), "تم العكس — عدّل النسخة الجديدة"); if (r !== undefined) router.push(`/purchases/new?copy=${id}`); }}>✏️ تصحيح (عكس + نسخة جديدة)</button></div></div>}
+        <Link href={`/purchases/new?amend=${id}`}><button type="button" title="يبقى رقم الفاتورة ودفعاتها الحقيقية مرتبطة بها">✏️ تصحيح (يبقى الرقم والدفعات)</button></Link>
+</div></div>}
     {posted && can(me, "purchase:create") && <div className="card" style={{ marginTop: 12 }}><h2>مرتجع للمورد</h2>
       <p>يعود المرتجع من نفس طبقة الشراء وبتكلفتها. ما بيع منها يتطلب سبباً استثنائياً وموافقة المالك.</p>
       {d.lines.map((l) => <div className="row" key={l.id}><div>{l.productName} (المشترى {money(l.qtyBase)})</div><div><label>الكمية المرتجعة (وحدة أساسية)</label><input value={ret[l.id] ?? ""} onChange={(e) => setRet({ ...ret, [l.id]: e.target.value })} inputMode="decimal" dir="ltr" /></div></div>)}

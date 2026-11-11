@@ -1,6 +1,8 @@
 "use client";
 import { FxRateField } from "@/components/fx-rate-field";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { MsgBox, StatusBadge, useAction, useLoad , ReverseBox } from "@/components/ui";
@@ -13,6 +15,11 @@ export default function Payments() {
   const sup = useLoad<Sup[]>("/api/contacts?kind=SUPPLIER", []).data, cash = useLoad<Cash[]>("/api/cash-accounts", []).data;
   const { msg, busy, run } = useAction(() => { void list.reload(); void aging.reload(); });
   const [alloc, setAlloc] = useState<Record<string, string>>({}); const [reason, setReason] = useState("");
+  const router = useRouter(); const editId = useSearchParams().get("edit");
+  const form = useLoad<any>(editId ? `/api/supplier-payments/${editId}/edit` : null, null).data;
+  useEffect(() => { if (form) setAlloc(Object.fromEntries(form.allocations.map((x: any) => [x.purchaseId, String(Number(x.paid))]))); }, [form]);
+  const editRows: Aging[] = form ? form.allocations.map((x: any) => ({ id: x.purchaseId, docNo: x.docNo, supplier: "", currency: x.currency, outstanding: x.outstandingWithout, dueDate: null, daysOverdue: 0 })) : [];
+  const rows = editId ? [...editRows, ...aging.data.filter((a) => !editRows.some((e) => e.id === a.id) && form && sup.length > 0)].filter((a) => Number(a.outstanding) > 0) : aging.data.filter((a) => Number(a.outstanding) > 0);
   async function create(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault(); const f = new FormData(e.currentTarget);
     const cur = cash.find((c) => c.id === String(f.get("cash")))?.currency ?? "IQD";
@@ -20,10 +27,29 @@ export default function Payments() {
     const r = await run(() => api<{ id: string }>("/api/supplier-payments", { method: "POST", body: { supplierId: String(f.get("sup")), docDate: String(f.get("date")), cashAccountId: String(f.get("cash")), currency: cur, exchangeRate: cur === "IQD" ? null : String(f.get("rate") || "") || null, amount: String(f.get("amount")), allocations } }), "حُفظت مسودة السند");
     if (r) setAlloc({});
   }
+  async function amend(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault(); if (!form) return; const f = new FormData(e.currentTarget);
+    const cur = cash.find((c) => c.id === String(f.get("cash")))?.currency ?? form.currency;
+    const allocations = Object.entries(alloc).filter(([, v]) => v && Number(v) > 0).map(([purchaseId, amount]) => ({ purchaseId, amount }));
+    const u = await run(() => api(`/api/supplier-payments/${editId}/amend`, { method: "POST", body: { supplierId: form.supplierId, docDate: String(f.get("date")), cashAccountId: String(f.get("cash")), currency: cur, exchangeRate: cur === "IQD" ? null : String(f.get("rate") || "") || null, amount: String(f.get("amount")), allocations, version: form.version } }), "تم حفظ التعديل — بقي رقم السند نفسه");
+    if (u !== undefined) router.push("/purchases/payments");
+  }
   const [showDel, setShowDel] = useState(false);
   return (<>
-    <h1>سندات الصرف للموردين</h1>
-    {can(me, "voucher:create") && <form className="card" onSubmit={create} style={{ display: "grid", gap: 12 }}>
+    <h1>{editId ? `تعديل سند الصرف ${form?.docNo ?? ""}` : "سندات الصرف للموردين"}</h1>{editId && <div className="msg">تعديل سند مرحّل: يبقى رقمه ويُعاد احتساب الصندوق وفواتير الشراء تلقائياً، وتبقى النسخ القديمة في سجل التدقيق.</div>}
+    {editId && !form && <p>جارٍ التحميل…</p>}
+    {editId && form && can(me, "voucher:cancel") && <form className="card" key={`${editId}-${form.version}`} onSubmit={amend} style={{ display: "grid", gap: 12 }}>
+      <div className="row">
+        <div><label htmlFor="d">التاريخ</label><input id="d" name="date" type="date" defaultValue={form.docDate} /></div>
+        <div><label htmlFor="c">الصندوق (يحدد العملة)</label><select id="c" name="cash" required defaultValue={form.cashAccountId}>{cash.filter((c) => c.kind !== "PARTNER_CUSTODY").map((c) => <option key={c.id} value={c.id}>{c.name} ({c.currency})</option>)}</select></div>
+        <div><label htmlFor="a">المبلغ</label><input id="a" name="amount" inputMode="decimal" dir="ltr" required defaultValue={String(Number(form.amount))} /></div>
+        <FxRateField />
+      </div>
+      <div className="cards-as-list"><table><thead><tr><th>الفاتورة</th><th>المستحق (دون هذا السند)</th><th>تخصيص</th></tr></thead>
+        <tbody>{rows.map((a) => <tr key={a.id}><td><span className="num">{a.docNo}</span></td><td><span className="num">{money(a.outstanding)} {a.currency}</span></td><td><input style={{ maxWidth: 140 }} dir="ltr" inputMode="decimal" value={alloc[a.id] ?? ""} onChange={(e) => setAlloc({ ...alloc, [a.id]: e.target.value })} /></td></tr>)}</tbody></table></div>
+      <p>المتبقي من المبلغ بلا تخصيص يُسجَّل دفعة مقدمة للمورد.</p>
+      <MsgBox msg={msg} /><div className="row"><button className="primary" disabled={busy}>حفظ التعديل</button><Link href="/purchases/payments"><button type="button">رجوع</button></Link></div></form>}
+    {!editId && can(me, "voucher:create") && <form className="card" onSubmit={create} style={{ display: "grid", gap: 12 }}>
       <div className="row">
         <div><label htmlFor="s">المورد</label><select id="s" name="sup" required><option value="">اختر…</option>{sup.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
         <div><label htmlFor="d">التاريخ</label><input id="d" name="date" type="date" defaultValue={today()} /></div>
@@ -33,7 +59,7 @@ export default function Payments() {
       </div>
       <p>خصّص الدفعة على فواتير آجلة مستحقة (المتبقي غير المخصص يُسجَّل دفعة مقدمة للمورد). فرق الصرف يُحتسب عند الترحيل.</p>
       <div className="cards-as-list"><table><thead><tr><th>الفاتورة</th><th>المورد</th><th>المستحق</th><th>الاستحقاق</th><th>تخصيص</th></tr></thead>
-        <tbody>{aging.data.filter((a) => Number(a.outstanding) > 0).map((a) => <tr key={a.id}><td><span className="num">{a.docNo}</span></td><td>{a.supplier}</td><td><span className="num">{money(a.outstanding)} {a.currency}</span></td>
+        <tbody>{rows.map((a) => <tr key={a.id}><td><span className="num">{a.docNo}</span></td><td>{a.supplier}</td><td><span className="num">{money(a.outstanding)} {a.currency}</span></td>
           <td><span className="num">{a.dueDate ?? "—"}</span>{a.daysOverdue > 0 && <span className="badge"> متأخر {a.daysOverdue} يوم</span>}</td>
           <td><input style={{ maxWidth: 140 }} dir="ltr" inputMode="decimal" value={alloc[a.id] ?? ""} onChange={(e) => setAlloc({ ...alloc, [a.id]: e.target.value })} /></td></tr>)}</tbody></table></div>
       <MsgBox msg={msg} /><button className="primary" disabled={busy}>حفظ كمسودة</button></form>}
@@ -42,6 +68,6 @@ export default function Payments() {
       <tbody>{list.data.filter((p) => showDel || p.status !== "REVERSED").map((p) => <tr key={p.id}><td><span className="num">{p.docNo ?? p.draftRef}</span></td><td><span className="num">{p.docDate}</span></td><td>{p.supplierName}</td><td><span className="num">{money(p.amount)} {p.currency}</span></td><td><span className="num">{money(p.fxDiffBase)}</span></td><td><StatusBadge s={p.status} /></td>
         <td><a href={`/print/supplier-payment/${p.id}`} target="_blank" rel="noreferrer"><button>طباعة</button></a>{p.status === "DRAFT" && can(me, "voucher:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/supplier-payments/${p.id}/post`, { method: "POST" }), "تم الترحيل")}>ترحيل</button>}
           {p.status === "DRAFT" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/supplier-payments/${p.id}`, { method: "DELETE" }), "حُذفت المسودة")}>حذف</button>}
-          {p.status === "POSTED" && can(me, "voucher:cancel") && <ReverseBox label="حذف" busy={busy} onReverse={(reason) => run(() => api(`/api/supplier-payments/${p.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
+          {p.status === "POSTED" && can(me, "voucher:cancel") && <Link href={`/purchases/payments?edit=${p.id}`}><button type="button">✏️ تعديل</button></Link>}{p.status === "POSTED" && can(me, "voucher:cancel") && <ReverseBox label="حذف" busy={busy} onReverse={(reason) => run(() => api(`/api/supplier-payments/${p.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
         {list.data.length === 0 && <tr><td colSpan={7}>لا توجد سندات</td></tr>}</tbody></table></div></>);
 }

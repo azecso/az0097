@@ -78,7 +78,7 @@ export async function postPayment(tx: Tx, who: Principal, actor: Actor, id: stri
     allocations: allocs.map((a) => ({ purchaseId: a.purchase_id, amount: a.amount })) } as z.infer<typeof paymentSchema>);
   const date = p.doc_date instanceof Date ? p.doc_date.toISOString().slice(0, 10) : String(p.doc_date);
   const fx = p.exchange_rate_snapshot as string, cur = p.currency as string;
-  const docNo = (await tx`SELECT next_document_number(${who.companyId}, 'supplier_payment', ${yearOf(date)}) AS n`)[0]!.n as string;
+  const docNo = (p.doc_no as string | null) ?? (await tx`SELECT next_document_number(${who.companyId}, 'supplier_payment', ${yearOf(date)}) AS n`)[0]!.n as string;   // an amended payment keeps its number
   let apBase = d(0), allocated = d(0);
   for (const a of allocs) { apBase = apBase.plus(toBase(a.amount, a.fx, cur)); allocated = allocated.plus(a.amount); }
   const advance = d(p.amount).minus(allocated);
@@ -109,6 +109,41 @@ export async function reversePayment(tx: Tx, who: Principal, actor: Actor, id: s
   return { id, status: "REVERSED" };
 }
 void Decimal; void roundMoney;
+
+/** Internal: POSTED -> DRAFT keeping the number; the journal entry and the cash movement are reversed (append-only), nothing is deleted. */
+export async function unpostPayment(tx: Tx, actor: Actor, id: string, reason: string) {
+  const [p] = await tx`SELECT * FROM supplier_payments WHERE id = ${id} FOR UPDATE`;
+  if (!p || p.status !== "POSTED") throw conflict("NOT_POSTED");
+  await reverseEntry(tx, actor, p.journal_entry_id, new Date().toISOString().slice(0, 10), `${reason} ${p.doc_no}`);
+  await reverseCashMovements(tx, "supplier_payment", id);
+  await tx`SELECT set_config('app.amend', 'on', true)`;
+  await tx`UPDATE supplier_payments SET status = 'DRAFT', version = version + 1, updated_at = now() WHERE id = ${id}`;
+}
+export const paymentUpdateSchema = paymentSchema.extend({ version: z.number().int() });
+/** Edit a POSTED payment voucher keeping its number: amount, date, cash account, allocation, currency/rate. One effective voucher; the old figures stay in the ledger and audit log. */
+export async function amendPayment(tx: Tx, who: Principal, actor: Actor, id: string, i: z.infer<typeof paymentUpdateSchema>) {
+  const [p] = await tx`SELECT * FROM supplier_payments WHERE id = ${id} FOR UPDATE`;
+  if (!p) throw notFound();
+  if (p.status !== "POSTED") throw conflict("NOT_POSTED", "التعديل بهذه الطريقة للسندات المرحّلة فقط");
+  if (p.version !== i.version) throw conflict("VERSION_CONFLICT", "تم تعديل السند من جهة أخرى؛ أعد فتحه");
+  await unpostPayment(tx, actor, id, "تعديل سند صرف");
+  await check(tx, i);
+  const rate = await resolveRate(tx, i.currency, i.docDate, i.exchangeRate ?? undefined);
+  await tx`UPDATE supplier_payments SET doc_date = ${i.docDate}, supplier_id = ${i.supplierId}, cash_account_id = ${i.cashAccountId}, currency = ${i.currency}, exchange_rate_snapshot = ${rate}, amount = ${i.amount}, notes = ${i.notes ?? null}, updated_at = now() WHERE id = ${id}`;
+  await writeAllocs(tx, who.companyId, id, i.allocations);
+  const h = await postPayment(tx, who, actor, id);
+  await audit(tx, actor, { action: "supplier_payment.amend", entityType: "supplier_payment", entityId: id, before: { amount: p.amount, docNo: p.doc_no }, after: { amount: i.amount } });
+  return h;
+}
+/** The editable form of a posted payment: each invoice with what is still owed WITHOUT this payment. */
+export async function getPaymentForEdit(tx: Tx, id: string) {
+  const [p] = await tx`SELECT id, doc_no AS "docNo", doc_date::text AS "docDate", supplier_id AS "supplierId", cash_account_id AS "cashAccountId", currency, exchange_rate_snapshot::text AS "exchangeRate", amount::text AS amount, notes, status, version FROM supplier_payments WHERE id = ${id}`;
+  if (!p) throw notFound();
+  const rows = await tx`SELECT po.id AS "purchaseId", po.doc_no AS "docNo", po.currency, a.amount::text AS paid FROM supplier_payment_allocations a JOIN purchase_orders po ON po.id = a.purchase_id WHERE a.payment_id = ${id} ORDER BY po.doc_date, po.doc_no`;
+  const allocations = [];
+  for (const x of rows) allocations.push({ ...x, outstandingWithout: d((await purchaseOutstanding(tx, x.purchaseId as string)).outstanding).plus(p.status === "POSTED" ? (x.paid as string) : 0).toString() });
+  return { ...p, allocations };
+}
 
 export async function getSupplierPayment(tx: Tx, id: string) {
   const [p] = await tx`SELECT sp.id, sp.doc_no AS "docNo", sp.draft_ref AS "draftRef", sp.doc_date::text AS "docDate", c.name AS "supplierName", c.phones AS "supplierPhones", c.address AS "supplierAddress", ca.name AS "cashAccount", sp.currency, sp.exchange_rate_snapshot::text AS "exchangeRate",

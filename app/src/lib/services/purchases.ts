@@ -149,7 +149,7 @@ export async function postPurchase(tx: Tx, who: Principal, actor: Actor, id: str
   const fx = po.exchange_rate_snapshot as string, cur = po.currency as string;
   const received = stamp(po.doc_date instanceof Date ? po.doc_date.toISOString().slice(0, 10) : String(po.doc_date));
   const docDate = received.slice(0, 10);
-  const docNo = (await tx`SELECT next_document_number(${who.companyId}, 'purchase_order', ${yearOf(docDate)}) AS n`)[0]!.n as string;
+  const docNo = (po.doc_no as string | null) ?? (await tx`SELECT next_document_number(${who.companyId}, 'purchase_order', ${yearOf(docDate)}) AS n`)[0]!.n as string;   // an amended purchase keeps its number
 
   const charges = await tx`SELECT * FROM purchase_charges WHERE purchase_id = ${id} ORDER BY line_no`;
   const lineBase = lines.map((l) => toBase(l.line_total, fx, cur));
@@ -207,12 +207,48 @@ export async function reversePurchase(tx: Tx, who: Principal, actor: Actor, id: 
   if ((await tx`SELECT 1 FROM purchase_returns WHERE purchase_id = ${id} AND status = 'POSTED'`).length) throw conflict("HAS_RETURNS", "يوجد مرتجع مرحّل على هذه الفاتورة؛ اعكسه أولاً");
   if ((await tx`SELECT 1 FROM supplier_payment_allocations a JOIN supplier_payments sp ON sp.id = a.payment_id WHERE a.purchase_id = ${id} AND sp.status = 'POSTED'`).length) throw conflict("HAS_PAYMENTS", "توجد دفعات مرحّلة؛ اعكسها أولاً");
   const today = new Date().toISOString().slice(0, 10);
-  if (!(await retireLots(tx, who.companyId, "purchase_order", id, new Date()))) throw conflict("PURCHASE_LOT_CONSUMED", "جزء من البضاعة بيع أو نُقل؛ اعكس تلك الحركات أولاً");
+  if (!(await retireLots(tx, who.companyId, "purchase_order", id, new Date()))) throw conflict("PURCHASE_LOT_CONSUMED", "جزء من هذه البضاعة بيع أو نُقل أو أُخرج، فلا يمكن تغيير كلفتها بأثر رجعي. المسار: اعكس المبيعات/التحويلات التي استهلكتها (أو سجّل مرتجع شراء للكمية المطلوبة)، ثم صحّح الفاتورة.");
   await reverseEntry(tx, actor, po.journal_entry_id, today, `عكس فاتورة شراء ${po.doc_no}: ${reason}`);
   if (po.payment_type === "CASH") await reverseCashMovements(tx, "purchase_order", id);
   await tx`UPDATE purchase_orders SET status = 'REVERSED', version = version + 1, updated_at = now() WHERE id = ${id}`;
   await audit(tx, actor, { action: "purchase.reverse", entityType: "purchase_order", entityId: id, reason });
   return { id, status: "REVERSED" };
+}
+
+
+/**
+ * Edit a POSTED purchase invoice keeping its number (owner/accountant with purchase:cancel). Supplier payments really made on it stay and follow the new version: they are un-posted
+ * (same numbers), the invoice is reversed and re-created, the payments are re-linked and re-posted. If the corrected invoice is worth less than what was paid, the allocation is cut and
+ * the rest of the payment stays an advance to the supplier (never deleted, never silently refunded). Refused — with the allowed path — when goods were already sold/moved or returned.
+ */
+export async function amendPurchase(tx: Tx, who: Principal, actor: Actor, id: string, i: z.infer<typeof purchaseUpdateSchema>) {
+  const [po] = await tx`SELECT * FROM purchase_orders WHERE id = ${id} FOR UPDATE`;
+  if (!po) throw notFound();
+  if (po.status !== "POSTED") throw conflict("NOT_POSTED", "التعديل بهذه الطريقة للفواتير المرحّلة فقط");
+  if (po.version !== i.version) throw conflict("VERSION_CONFLICT", "تم تعديل الفاتورة من جهة أخرى؛ أعد فتحها");
+  const pays = (await tx`SELECT DISTINCT sp.id, sp.doc_date, sp.created_at FROM supplier_payment_allocations a JOIN supplier_payments sp ON sp.id = a.payment_id WHERE a.purchase_id = ${id} AND sp.status = 'POSTED' ORDER BY sp.doc_date, sp.created_at`).map((r) => r.id as string);
+  if (pays.length && (i.supplierId !== po.supplier_id || i.currency !== po.currency || i.paymentType !== "CREDIT"))
+    throw conflict("PAYMENTS_BLOCK_CHANGE", "على الفاتورة دفعات حقيقية للمورد؛ لا يمكن تغيير المورد أو عملة الفاتورة أو جعلها نقدية. عدّل سند الصرف أولاً أو اعكسه ثم صحّح الفاتورة.");
+  const P = await import("./payments");
+  for (const p of pays) await P.unpostPayment(tx, actor, p, "تعديل فاتورة الشراء — إعادة احتساب سند الصرف");
+  await reversePurchase(tx, who, actor, id, "تعديل الفاتورة");                       // still refuses when goods were consumed or returned
+  await tx`SELECT set_config('app.amend', 'on', true)`;
+  await tx`UPDATE purchase_orders SET doc_no = ${`${po.doc_no}~r${Date.now().toString(36)}`}, updated_at = now() WHERE id = ${id}`;
+  const created = await createPurchase(tx, who, actor, i);
+  await tx`UPDATE purchase_orders SET doc_no = ${po.doc_no}, amended_from = ${id} WHERE id = ${created.id}`;
+  const posted = await postPurchase(tx, who, actor, created.id as string);
+  if (pays.length) {
+    await tx`UPDATE supplier_payment_allocations SET purchase_id = ${created.id} WHERE purchase_id = ${id} AND payment_id = ANY(${pays}::uuid[])`;
+    let room = d((await tx`SELECT total::text AS t FROM purchase_orders WHERE id = ${created.id}`)[0]!.t as string);
+    for (const p of pays) for (const a of await tx`SELECT id, amount::text AS amount FROM supplier_payment_allocations WHERE payment_id = ${p} AND purchase_id = ${created.id}`) {
+      const keep = Decimal.min(d(a.amount as string), room);
+      if (keep.lt(d(a.amount as string))) { if (keep.lte(0)) await tx`DELETE FROM supplier_payment_allocations WHERE id = ${a.id}`; else await tx`UPDATE supplier_payment_allocations SET amount = ${keep.toString()} WHERE id = ${a.id}`; }
+      room = room.minus(keep);
+    }
+    for (const p of pays) await P.postPayment(tx, who, actor, p);
+  }
+  await audit(tx, actor, { action: "purchase.amend", entityType: "purchase_order", entityId: created.id as string, before: { id, docNo: po.doc_no, total: po.total }, after: { docNo: posted.docNo } });
+  return { id: created.id as string, docNo: posted.docNo as string, status: "POSTED" };
 }
 
 // ======================= purchase returns =======================

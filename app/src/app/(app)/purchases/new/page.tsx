@@ -16,7 +16,7 @@ function Inner() {
   const router = useRouter(); const { msg, busy, run } = useAction();
   const [newProds, setNewProds] = useState<Prod[]>([]); const prodsLoaded = useLoad<Prod[]>("/api/products", []).data, sup = useLoad<Contact[]>("/api/contacts?kind=SUPPLIER", []).data; const prods = [...prodsLoaded, ...newProds];
   const cash = useLoad<Cash[]>("/api/cash-accounts", []).data, locs = useLoad<Loc[]>("/api/locations", []).data;
-  const sp = useSearchParams(); const editId = sp.get("edit"); const srcId = editId ?? sp.get("copy"); const ex = useLoad<any>(srcId ? `/api/purchases/${srcId}` : null, null).data; const ed = editId ? ex : null;
+  const sp = useSearchParams(); const editId = sp.get("edit"); const amendId = sp.get("amend"); const srcId = editId ?? amendId ?? sp.get("copy"); const ex = useLoad<any>(srcId ? `/api/purchases/${srcId}` : null, null).data; const ed = editId || amendId ? ex : null;
   const [cur, setCur] = useState("IQD"); const [type, setType] = useState("CASH");
   const policy = useLoad<{ landedCostPolicy: string } | null>("/api/company", null).data?.landedCostPolicy ?? "EXCLUDE";
   const [charges, setCharges] = useState<Charge[]>([]);
@@ -31,12 +31,13 @@ function Inner() {
     const payload = { supplierId: String(f.get("supplier")), docDate: String(f.get("date")), paymentType: type,
       cashAccountId: type === "CASH" ? String(f.get("cash")) : null, dueDate: type === "CREDIT" && f.get("due") ? String(f.get("due")) : null, currency: cur, exchangeRate: cur === "IQD" ? null : String(f.get("rate") || "") || null,
       supplierInvoiceNo: String(f.get("inv") ?? "") || null, lines: lines.map((l) => ({ productId: l.productId, uom: l.uom, qty: l.qty, unitPrice: l.unitPrice, locationId: l.locationId || null, profitClass: l.profitClass })), charges: charges.filter((c) => c.amount).map((c) => ({ kind: c.kind, description: c.description || null, amount: c.amount, capitalize: c.capitalize })) };
+    if (amendId) { if (!ex) return; const u = await run(() => api<{ id: string }>(`/api/purchases/${amendId}/amend`, { method: "POST", body: { ...payload, version: ex.version } }), "تم التصحيح — بقي رقم الفاتورة نفسه ودفعاتها مرتبطة بها"); if (u) router.push(`/purchases/${u.id}`); return; }
     if (editId) { if (!ex) return; const u = await run(() => api(`/api/purchases/${editId}`, { method: "PUT", body: { ...payload, version: ex.version } }), "تم حفظ التعديل"); if (u !== undefined) router.push(`/purchases/${editId}`); return; }
     const r = await run(() => api<{ id: string }>("/api/purchases", { method: "POST", body: payload }), "تم حفظ المسودة");
     if (r) router.push(`/purchases/${r.id}`);
   }
   return (<>
-    <h1>{editId ? "تعديل فاتورة شراء (مسودة)" : sp.get("copy") ? "فاتورة شراء مصحَّحة (نسخة جديدة)" : "فاتورة شراء جديدة"}</h1>{editId && ex && ex.status !== "DRAFT" && <div className="msg err">لا يمكن تعديل مستند مرحّل؛ استخدم «تصحيح».</div>}
+    <h1>{amendId ? `تصحيح فاتورة الشراء ${ex?.docNo ?? ""}` : editId ? "تعديل فاتورة شراء (مسودة)" : sp.get("copy") ? "فاتورة شراء مصحَّحة (نسخة جديدة)" : "فاتورة شراء جديدة"}</h1>{editId && ex && ex.status !== "DRAFT" && <div className="msg err">لا يمكن تعديل مستند مرحّل؛ استخدم «تصحيح».</div>}
     <p>تُحفظ كمسودة، ولا يصدر رقمها النهائي ولا تدخل البضاعة للمخزون إلا عند الترحيل. سعر شراء المادة وحده يدخل تكلفة المخزون؛ النقل مصروف منفصل.</p>
     <form key={ex?.id ?? "new"} onSubmit={save} className="card" style={{ display: "grid", gap: 12 }}>
       <div className="row">
@@ -72,7 +73,7 @@ function Inner() {
         <label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" style={{ width: 24, minHeight: 24 }} checked={c.capitalize} onChange={(e) => setCharges(charges.map((x, j) => j === i ? { ...x, capitalize: e.target.checked } : x))} />إضافة إلى كلفة المخزون</label>
         <button type="button" className="danger" onClick={() => setCharges(charges.filter((_, j) => j !== i))}>حذف</button></div>))}
       <button type="button" onClick={() => setCharges([...charges, { kind: "TRANSPORT", description: "", amount: "", capitalize: policy === "INCLUDE" }])}>+ تكلفة إضافية</button>
-      <MsgBox msg={msg} /><button className="primary" disabled={busy}>حفظ كمسودة</button>
+      <MsgBox msg={msg} /><button className="primary" disabled={busy}>{amendId ? "حفظ التصحيح" : "حفظ كمسودة"}</button>
     </form></>);
 }
 export default function NewPurchase() { return <Suspense fallback={null}><Inner /></Suspense>; }
