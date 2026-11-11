@@ -18,6 +18,12 @@ export async function documentHistory(tx: Tx, kind: string, id: string) {
         allv AS (SELECT id FROM up UNION SELECT id FROM down)
       SELECT s.id, s.doc_no AS "docNo", s.status, s.version, s.net::text AS net, s.currency, s.amended_from AS "amendedFrom", s.created_at AS "createdAt", (s.doc_no LIKE '%~r%') AS "replaced" FROM sales_invoices s JOIN allv ON allv.id = s.id ORDER BY s.created_at`)];
     ids = chain.map((c) => c.id as string);
+  } else if (kind === "purchases") {
+    chain = [...(await tx`WITH RECURSIVE up AS (SELECT id, amended_from FROM purchase_orders WHERE id = ${id} UNION SELECT s.id, s.amended_from FROM purchase_orders s JOIN up ON s.id = up.amended_from),
+        down AS (SELECT id, amended_from FROM purchase_orders WHERE id = ${id} UNION SELECT s.id, s.amended_from FROM purchase_orders s JOIN down ON s.amended_from = down.id),
+        allv AS (SELECT id FROM up UNION SELECT id FROM down)
+      SELECT s.id, s.doc_no AS "docNo", s.status, s.version, s.total::text AS net, s.currency, s.amended_from AS "amendedFrom", s.created_at AS "createdAt", (s.doc_no LIKE '%~r%') AS "replaced" FROM purchase_orders s JOIN allv ON allv.id = s.id ORDER BY s.created_at`)];
+    ids = chain.map((c) => c.id as string);
   }
   const events = await tx`SELECT a.id::text AS id, a.occurred_at AS "at", u.username AS "user", a.action, a.entity_id AS "entityId", a.reason, a.before_data AS before, a.after_data AS after
     FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id WHERE a.entity_type = ${k.entity} AND a.entity_id = ANY(${ids}::uuid[]) ORDER BY a.id`;

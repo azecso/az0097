@@ -36,6 +36,13 @@ describe("amend a posted purchase invoice", () => {
     n = await getP(up.body.id); expect(Number(n.outstanding)).toBe(16000); expect(await cashNet(w.ids.cashIQD)).toBe(c0);
     expect((await w.tb()).balanced).toBe(true); expect((await w.recon()).ok).toBe(true);
   });
+  it("the document history shows the whole chain of purchase versions and who amended", async () => {
+    const id = (await w.buy({ product: P, qty: "1", price: "500", date: "2026-02-25", type: "CASH" })).id; const g = await getP(id);
+    const r1 = await amendP(id, pbody(g, "2", "500")); expect(r1.status).toBe(200);
+    const hist = await import("@/app/api/document-history/[kind]/[id]/route");
+    const h = (await w.api(w.owner, hist.GET, { params: { kind: "purchases", id: r1.body.id } })).body;
+    expect(h.chain).toHaveLength(2); expect(h.chain.filter((c: any) => c.replaced)).toHaveLength(1); expect(h.events.some((e: any) => e.action === "purchase.amend")).toBe(true);
+  });
   it("refused with a clear path when the goods were already sold; nothing changes", async () => {
     const id = (await w.buy({ product: P, qty: "5", price: "700", date: "2026-02-20", type: "CASH" })).id; const g = await getP(id);
     const sold = await w.sale({ product: P, qty: String(await stockQty()), price: "2000", date: "2026-03-01", type: "CREDIT" }); expect(sold.status).toBe(200);   // sells everything, this lot included

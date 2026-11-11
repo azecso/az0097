@@ -13,6 +13,7 @@ interface Doc { id: string; docNo: string | null; draftRef: string; docDate: str
 export default function PurchaseView() {
   const { id } = useParams<{ id: string }>(); const router = useRouter(); const me = useMe();
   const { data: d, reload, err } = useLoad<Doc | null>(`/api/purchases/${id}`, null); const { msg, busy, run, setMsg } = useAction(reload); const [payOpen, setPayOpen] = useState(false);
+  type Hist = { chain: { id: string; docNo: string; status: string; net: string; createdAt: string; replaced: boolean }[]; events: { id: string; at: string; user: string; action: string; reason: string | null }[] }; const [hist, setHist] = useState<Hist | null>(null);
   const [reason, setReason] = useState(""); const [ret, setRet] = useState<Record<string, string>>({}); const [exc, setExc] = useState("");
   if (!d) return <p>{err || "جارٍ التحميل…"}</p>;
   const posted = d.status === "POSTED";
@@ -47,6 +48,9 @@ export default function PurchaseView() {
         <button className="danger" disabled={busy || reason.length < 3} onClick={() => run(() => api(`/api/purchases/${id}/reverse`, { method: "POST", body: { reason } }), "تم عكس المستند")}>حذف</button>
         <Link href={`/purchases/new?amend=${id}`}><button type="button" title="يبقى رقم الفاتورة ودفعاتها الحقيقية مرتبطة بها">✏️ تصحيح (يبقى الرقم والدفعات)</button></Link>
 </div></div>}
+    {posted && can(me, "audit:view") && <div className="card" style={{ marginTop: 12 }}><button type="button" onClick={() => api<Hist>(`/api/document-history/purchases/${id}`).then(setHist)}>سجل إصدارات الفاتورة (للمالك)</button>
+      {hist && <><table><thead><tr><th>الإصدار</th><th>الحالة</th><th>الإجمالي</th><th>التاريخ</th></tr></thead><tbody>{hist.chain.map((c) => <tr key={c.id}><td><span className="num">{c.docNo}</span>{c.replaced ? " (استُبدل)" : " (الحالي)"}</td><td>{c.status}</td><td><span className="num">{money(c.net)}</span></td><td><span className="num">{new Date(c.createdAt).toLocaleString("ar-IQ")}</span></td></tr>)}</tbody></table>
+        <table><thead><tr><th>الإجراء</th><th>المستخدم</th><th>الوقت</th><th>السبب</th></tr></thead><tbody>{hist.events.map((e) => <tr key={e.id}><td>{e.action}</td><td>{e.user}</td><td><span className="num">{new Date(e.at).toLocaleString("ar-IQ")}</span></td><td>{e.reason ?? ""}</td></tr>)}</tbody></table></>}</div>}
     {posted && can(me, "purchase:create") && <div className="card" style={{ marginTop: 12 }}><h2>مرتجع للمورد</h2>
       <p>يعود المرتجع من نفس طبقة الشراء وبتكلفتها. ما بيع منها يتطلب سبباً استثنائياً وموافقة المالك.</p>
       {d.lines.map((l) => <div className="row" key={l.id}><div>{l.productName} (المشترى {money(l.qtyBase)})</div><div><label>الكمية المرتجعة (وحدة أساسية)</label><input value={ret[l.id] ?? ""} onChange={(e) => setRet({ ...ret, [l.id]: e.target.value })} inputMode="decimal" dir="ltr" /></div></div>)}
