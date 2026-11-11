@@ -128,7 +128,8 @@ describe("losses are carried forward and covered before any later distribution",
     expect((await w.api(w.acct, w.R.settleReverse, { method: "POST", params: { id: latest.id }, body: { reason: "اختبار" } })).status).toBe(403);
     const r = await w.api(w.owner, w.R.settleReverse, { method: "POST", params: { id: latest.id }, body: { reason: "تصحيح الفترة" } });
     expect(r.status).toBe(200);
-    expect((await preview("2026-10-01", "2026-10-31")).body.eligibleProfit).toBe("240000");              // sale 3's 270,000 is available again, minus the -30,000 from the earlier return (D-08)
+    expect((await preview("2026-10-01", "2026-10-31")).body.eligibleProfit).toBe("270000");              // sale 3's 270,000 is available again; the November return is dated after the cut-off and does NOT leak into October
+    expect((await preview("2026-10-01", "2026-11-30")).body.eligibleProfit).toBe("240000");              // ...it only appears once the period reaches its date (-30,000)
     expect((await w.tb()).balanced).toBe(true);
   });
   it("opening-balance receivables never count as profit", async () => {

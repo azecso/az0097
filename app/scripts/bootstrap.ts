@@ -13,7 +13,7 @@ const ACCOUNTS: Array<[string, string, string, "DEBIT" | "CREDIT", boolean?]> = 
   ["1390", "مشتريات تحت التسوية", "ASSET", "DEBIT"],
   ["2100", "ذمم الموردين", "LIABILITY", "CREDIT"], ["2200", "رواتب مستحقة", "LIABILITY", "CREDIT"],
   ["2210", "مصروفات مستحقة", "LIABILITY", "CREDIT"], ["2300", "ذمة مستحقة للشريك", "LIABILITY", "CREDIT"],
-  ["2400", "أرصدة دائنة للعملاء", "LIABILITY", "CREDIT"], ["2500", "أرباح معتمدة مستحقة الدفع", "LIABILITY", "CREDIT"],
+  ["2400", "أرصدة دائنة للعملاء", "LIABILITY", "CREDIT"], ["2600", "إيرادات مؤجلة — فواتير غير مسلّمة", "LIABILITY", "CREDIT"], ["2500", "أرباح معتمدة مستحقة الدفع", "LIABILITY", "CREDIT"],
   ["3100", "رأس المال — المالك", "EQUITY", "CREDIT"], ["3200", "سحوبات المالك", "EQUITY", "DEBIT"],
   ["3300", "أرباح محتجزة", "EQUITY", "CREDIT"], ["3400", "أرباح موزعة", "EQUITY", "DEBIT"], ["3500", "أرباح موزَّعة خارج النظام", "EQUITY", "DEBIT"],
   ["3900", "رصيد افتتاحي مُوازِن (مؤقت)", "EQUITY", "CREDIT"],

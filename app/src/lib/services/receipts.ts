@@ -7,7 +7,7 @@ import { badRequest, conflict, notFound } from "../errors";
 import { d, split5050, toBase } from "../money";
 import { postJournal, reverseEntry, type JLine } from "../ledger";
 import { currencyCode, dateStr, draftRef, moneyStr, rateStr, resolveRate, uuid, yearOf } from "./common";
-import { invoiceFinancials } from "./sales";
+import { invoiceFinancials, invoiceProfit } from "./sales";
 import { assertCashAvailable } from "./cash";
 
 const dateOf = (v: unknown) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v));
@@ -54,6 +54,10 @@ async function validate(tx: Tx, i: z.infer<typeof receiptSchema>, who: Principal
     if (ext.gt(0)) {                                              // profit already distributed outside the system: owner only, cash receipts in dinar only
       if (!who.isOwner) throw badRequest("EXTERNAL_PROFIT_OWNER_ONLY", "تسجيل الربح الموزَّع خارج النظام للمالك فقط");
       if (i.kind !== "CASH" || i.currency !== "IQD") throw badRequest("EXTERNAL_PROFIT_IQD_CASH_ONLY", "الربح الخارجي يُسجَّل في سند قبض نقدي بالدينار فقط");
+    }
+    if (ext.gt(0)) {                                              // "outside-distributed profit" is a NON-cash settlement of the receivable that stands for profit the partners already took: it can never exceed the profit the invoice has earned
+      const prof = await invoiceProfit(tx, a.invoiceId), fin0 = await invoiceFinancials(tx, a.invoiceId);
+      if (ext.plus(fin0.external).gt(Decimal.max(d(prof.adjustedProfitBase), 0))) throw conflict("EXTERNAL_EXCEEDS_PROFIT", `الربح الخارجي (${ext.plus(fin0.external)}) يتجاوز ربح الفاتورة المتحقق من البضاعة المسلَّمة (${prof.adjustedProfitBase})`);
     }
     if (d(a.amount).lte(0) && ext.lte(0)) throw badRequest("EMPTY_ALLOCATION", "حدّد مبلغاً مستحصلاً أو ربحاً خارجياً للفاتورة");
     if (d(a.amount).plus(ext).gt((await invoiceFinancials(tx, a.invoiceId)).outstanding)) throw conflict("OVER_ALLOCATION", "المبلغ المخصص (المستحصل + الخارجي) يتجاوز المتبقي على الفاتورة");

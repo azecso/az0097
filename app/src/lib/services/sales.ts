@@ -14,13 +14,15 @@ import { assertCashAvailable } from "./cash";
 const dateOf = (v: unknown) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v));
 
 // =========================== invoice financial position ===========================
-export async function invoiceFinancials(tx: Tx, invoiceId: string) {
+const FOREVER = "9999-12-31";
+/** Money state of an invoice; with `asOf` only documents dated on or before that day count (settlement cut-off). Reversed documents never count. */
+export async function invoiceFinancials(tx: Tx, invoiceId: string, asOf: string = FOREVER) {
   const [r] = await tx`SELECT si.net::text AS net, si.currency, si.sale_type,
-      COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED' AND NOT a.external), 0)::text AS collected,
-      COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED' AND a.external), 0)::text AS external,
-      COALESCE((SELECT sum(value_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0)::text AS returned,
-      COALESCE((SELECT sum(applied_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0)::text AS applied,
-      COALESCE((SELECT sum(refund_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0)::text AS refunds
+      COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED' AND cr.doc_date <= ${asOf} AND NOT a.external), 0)::text AS collected,
+      COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED' AND cr.doc_date <= ${asOf} AND a.external), 0)::text AS external,
+      COALESCE((SELECT sum(value_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED' AND doc_date <= ${asOf}), 0)::text AS returned,
+      COALESCE((SELECT sum(applied_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED' AND doc_date <= ${asOf}), 0)::text AS applied,
+      COALESCE((SELECT sum(refund_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED' AND doc_date <= ${asOf}), 0)::text AS refunds
     FROM sales_invoices si WHERE si.id = ${invoiceId}`;
   if (!r) throw notFound();
   const outstanding = Decimal.max(d(r.net).minus(r.collected).minus(r.external).minus(r.applied), 0);
@@ -29,22 +31,32 @@ export async function invoiceFinancials(tx: Tx, invoiceId: string) {
 }
 
 /**
- * Profit figures of one invoice (base currency). linkedProfit = adjusted profit x MIN(1, net collected / adjusted net value):
- * a RESTRICTION indicator for distributing profit, not new accounting profit. Zero/negative adjusted value => 0.
+ * Profit figures of one invoice (base currency) as of a date (policy §2/§6):
+ *  - only the DELIVERED share of the invoice is earned: recognised value = delivered qty / invoiced qty of each line, cost = FIFO cost of what was delivered;
+ *  - linkedProfit = earned profit x MIN(1, net collected / earned value of the invoice in its own currency): cash received for goods not yet delivered is an advance, never profit;
+ *  - it is a RESTRICTION indicator for distributing profit, not new accounting profit. Zero/negative earned value => 0.
  */
-export async function invoiceProfit(tx: Tx, invoiceId: string) {
-  if ((await tx`SELECT is_opening FROM sales_invoices WHERE id = ${invoiceId}`)[0]?.is_opening) return { grossProfitBase: "0", adjustedProfitBase: "0", collectedRatio: "0", linkedProfitBase: "0" };   // opening balances carry no profit
-  const fin = await invoiceFinancials(tx, invoiceId);
-  const [r] = await tx`SELECT si.net_base::text AS net_base,
-      COALESCE((SELECT sum(value_base) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0)::text AS ret_base,
-      COALESCE((SELECT sum(cogs_base) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0)::text AS ret_cogs,
-      COALESCE((SELECT sum(dl.cost_base) FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id JOIN sales_lines sl ON sl.id = dl.sales_line_id WHERE sl.invoice_id = si.id AND dn.status = 'POSTED'), 0)::text AS cogs
-    FROM sales_invoices si WHERE si.id = ${invoiceId}`;
-  const adjNetBase = d(r!.net_base).minus(r!.ret_base), adjCogs = d(r!.cogs).minus(r!.ret_cogs);
-  const grossProfit = d(r!.net_base).minus(r!.cogs), adjustedProfit = adjNetBase.minus(adjCogs);
-  const adjNetOrig = d(fin.adjustedNet);
-  const ratio = adjNetOrig.gt(0) ? Decimal.min(1, Decimal.max(0, d(fin.netCollected).div(adjNetOrig))) : d(0);
-  return { grossProfitBase: grossProfit.toString(), adjustedProfitBase: adjustedProfit.toString(), collectedRatio: ratio.toDecimalPlaces(8).toString(), linkedProfitBase: roundMoney(adjustedProfit.mul(ratio), "IQD").toString() };
+export async function invoiceProfit(tx: Tx, invoiceId: string, asOf: string = FOREVER) {
+  const zero = { grossProfitBase: "0", adjustedProfitBase: "0", collectedRatio: "0", linkedProfitBase: "0", deliveredRatio: "0", recognizedNetBase: "0", recognizedNetOrig: "0", cogsBase: "0" };
+  if ((await tx`SELECT is_opening FROM sales_invoices WHERE id = ${invoiceId}`)[0]?.is_opening) return zero;   // opening balances carry no profit
+  const fin = await invoiceFinancials(tx, invoiceId, asOf);
+  const lines = await tx`SELECT sl.id, sl.qty_base::text AS q, sl.net_line_base::text AS nb, sl.net_line_orig::text AS no,
+      COALESCE((SELECT sum(dl.qty_base) FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id WHERE dl.sales_line_id = sl.id AND dn.status = 'POSTED' AND dn.doc_date <= ${asOf}), 0)::text AS dq,
+      COALESCE((SELECT sum(dl.cost_base) FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id WHERE dl.sales_line_id = sl.id AND dn.status = 'POSTED' AND dn.doc_date <= ${asOf}), 0)::text AS cogs
+    FROM sales_lines sl WHERE sl.invoice_id = ${invoiceId}`;
+  const [ret] = await tx`SELECT COALESCE(sum(value_base), 0)::text AS vb, COALESCE(sum(cogs_base), 0)::text AS cg FROM sales_returns WHERE invoice_id = ${invoiceId} AND status = 'POSTED' AND doc_date <= ${asOf}`;
+  let recB = d(0), recO = d(0), cogs = d(0), qAll = d(0), qDel = d(0);
+  for (const l of lines) {
+    const full = d(l.dq).gte(l.q);
+    recB = recB.plus(full ? l.nb : roundMoney(d(l.nb).mul(l.dq).div(l.q), "IQD"));
+    recO = recO.plus(full ? l.no : d(l.no).mul(l.dq).div(l.q));
+    cogs = cogs.plus(l.cogs); qAll = qAll.plus(l.q); qDel = qDel.plus(l.dq);
+  }
+  const adjRecB = recB.minus(ret!.vb), adjCogs = cogs.minus(ret!.cg), adjRecO = recO.minus(fin.returned);
+  const grossProfit = recB.minus(cogs), adjustedProfit = adjRecB.minus(adjCogs);
+  const ratio = adjRecO.gt(0) ? Decimal.min(1, Decimal.max(0, d(fin.netCollected).div(adjRecO))) : d(0);
+  return { grossProfitBase: grossProfit.toString(), adjustedProfitBase: adjustedProfit.toString(), collectedRatio: ratio.toDecimalPlaces(8).toString(), linkedProfitBase: roundMoney(adjustedProfit.mul(ratio), "IQD").toString(),
+    deliveredRatio: qAll.gt(0) ? qDel.div(qAll).toDecimalPlaces(8).toString() : "0", recognizedNetBase: adjRecB.toString(), recognizedNetOrig: adjRecO.toDecimalPlaces(4).toString(), cogsBase: adjCogs.toString() };
 }
 
 // =========================== invoices ===========================
@@ -171,11 +183,15 @@ export async function postInvoice(tx: Tx, who: Principal, actor: Actor, id: stri
     await tx`UPDATE sales_lines SET line_total_base = ${lineBase[i]!.toString()}, net_line_base = ${lineBase[i]!.minus(shB).toString()}, net_line_orig = ${d(l.line_total).minus(shO).toString()} WHERE id = ${l.id}`;
   }
   const docNo = (inv.doc_no as string | null) ?? (await tx`SELECT next_document_number(${who.companyId}, 'sales_invoice', ${yearOf(date)}) AS n`)[0]!.n as string;   // an amended invoice keeps its number
+  const deferred = inv.delivery_mode === "SEPARATE" && !inv.is_opening;                // revenue is recognised when goods are delivered (docs/ACCOUNTING_POLICY.md §2)
   const jl: JLine[] = [{ account: "1200", debit: netBase, currency: cur, amountOrig: inv.net, fx, contactId: inv.customer_id }];
-  if (discBase.gt(0)) jl.push({ account: "4150", debit: discBase, currency: cur, amountOrig: inv.discount, fx });
-  jl.push({ account: "4100", credit: grossBase, currency: cur, amountOrig: inv.gross, fx });
+  if (deferred) jl.push({ account: "2600", credit: netBase, currency: cur, amountOrig: inv.net, fx });
+  else {
+    if (discBase.gt(0)) jl.push({ account: "4150", debit: discBase, currency: cur, amountOrig: inv.discount, fx });
+    jl.push({ account: "4100", credit: grossBase, currency: cur, amountOrig: inv.gross, fx });
+  }
   const je = await postJournal(tx, actor, { date, sourceDocType: "sales_invoice", sourceDocId: id, memo: `فاتورة بيع ${docNo}`, lines: jl });
-  const [h] = await tx`UPDATE sales_invoices SET status = 'POSTED', doc_no = ${docNo}, gross_base = ${grossBase.toString()}, discount_base = ${discBase.toString()}, net_base = ${netBase.toString()},
+  const [h] = await tx`UPDATE sales_invoices SET status = 'POSTED', doc_no = ${docNo}, gross_base = ${grossBase.toString()}, discount_base = ${discBase.toString()}, net_base = ${netBase.toString()}, revenue_deferred = ${deferred},
       posted_by = ${who.userId}, posted_at = now(), journal_entry_id = ${je}, version = version + 1, updated_at = now() WHERE id = ${id} RETURNING id, doc_no AS "docNo", status, version`;
   let deliveryNo: string | null = null;
   if (inv.delivery_mode === "WITH_INVOICE") {
@@ -285,17 +301,29 @@ export async function postDelivery(tx: Tx, who: Principal, actor: Actor, id: str
   const date = dateOf(dn.doc_date);
   const lines = await tx`SELECT dl.*, sl.product_id, sl.location_id, sl.qty_base AS sold FROM delivery_lines dl JOIN sales_lines sl ON sl.id = dl.sales_line_id WHERE dl.delivery_id = ${id} ORDER BY sl.product_id, dl.line_no`;
   const docNo = (await tx`SELECT next_document_number(${who.companyId}, 'delivery_note', ${yearOf(date)}) AS n`)[0]!.n as string;
-  const inventory = new Map<string, Decimal>(); let cogs = d(0);
+  const [invRow] = await tx`SELECT revenue_deferred, doc_date FROM sales_invoices WHERE id = ${dn.invoice_id}`;
+  if (date < dateOf(invRow!.doc_date)) throw badRequest("DELIVERY_BEFORE_INVOICE", "تاريخ التسليم قبل تاريخ الفاتورة");
+  const inventory = new Map<string, Decimal>(); let cogs = d(0), revNet = d(0), revGross = d(0);
   for (const l of lines) {
-    const done = (await tx`SELECT COALESCE(sum(dl.qty_base), 0)::text AS q FROM delivery_lines dl JOIN delivery_notes n ON n.id = dl.delivery_id WHERE dl.sales_line_id = ${l.sales_line_id} AND n.status = 'POSTED'`)[0]!.q as string;
-    if (d(done).plus(l.qty_base).gt(l.sold)) throw conflict("DELIVERY_EXCEEDS_INVOICED", "الكمية المسلّمة تتجاوز المفوترة");
+    const done = (await tx`SELECT COALESCE(sum(dl.qty_base), 0)::text AS q, COALESCE(sum(dl.revenue_net_base), 0)::text AS rn, COALESCE(sum(dl.revenue_gross_base), 0)::text AS rg FROM delivery_lines dl JOIN delivery_notes n ON n.id = dl.delivery_id WHERE dl.sales_line_id = ${l.sales_line_id} AND n.status = 'POSTED'`)[0]!;
+    if (d(done.q).plus(l.qty_base).gt(l.sold)) throw conflict("DELIVERY_EXCEEDS_INVOICED", "الكمية المسلّمة تتجاوز المفوترة");
     const out = await consumeFifo(tx, who.companyId, { productId: l.product_id, locationId: l.location_id, qtyBase: l.qty_base, type: "SALE_OUT", docType: "delivery_note", docId: id, docLineId: l.id, at: new Date() });
-    await tx`UPDATE delivery_lines SET cost_base = ${out.cost.toString()} WHERE id = ${l.id}`;
+    let rn = d(0), rg = d(0);
+    if (invRow!.revenue_deferred) {                                                  // the delivered share of the invoiced value (the last delivery takes the exact remainder)
+      const [sl] = await tx`SELECT net_line_base, line_total_base, qty_base FROM sales_lines WHERE id = ${l.sales_line_id}`;
+      const last = d(done.q).plus(l.qty_base).eq(l.sold);
+      rn = last ? d(sl!.net_line_base).minus(done.rn) : roundMoney(d(sl!.net_line_base).mul(l.qty_base).div(l.sold), "IQD");
+      rg = last ? d(sl!.line_total_base).minus(done.rg) : roundMoney(d(sl!.line_total_base).mul(l.qty_base).div(l.sold), "IQD");
+      revNet = revNet.plus(rn); revGross = revGross.plus(rg);
+    }
+    await tx`UPDATE delivery_lines SET cost_base = ${out.cost.toString()}, revenue_net_base = ${rn.toString()}, revenue_gross_base = ${rg.toString()} WHERE id = ${l.id}`;
     const acct = await inventoryAccountOf(tx, l.location_id);
     inventory.set(acct, (inventory.get(acct) ?? d(0)).plus(out.cost)); cogs = cogs.plus(out.cost);
   }
-  const je = cogs.gt(0) ? await postJournal(tx, actor, { date, sourceDocType: "delivery_note", sourceDocId: id, memo: `سند تسليم ${docNo} — تكلفة البضاعة المباعة`,
-    lines: [{ account: "5100", debit: cogs }, ...[...inventory].map(([account, v]): JLine => ({ account, credit: v }))] }) : null;
+  const jl: JLine[] = [];
+  if (revNet.gt(0) || revGross.gt(0)) { jl.push({ account: "2600", debit: revNet }); if (revGross.minus(revNet).gt(0)) jl.push({ account: "4150", debit: revGross.minus(revNet) }); jl.push({ account: "4100", credit: revGross }); }
+  if (cogs.gt(0)) jl.push({ account: "5100", debit: cogs }, ...[...inventory].map(([account, v]): JLine => ({ account, credit: v })));
+  const je = jl.length ? await postJournal(tx, actor, { date, sourceDocType: "delivery_note", sourceDocId: id, memo: `سند تسليم ${docNo} — ${revGross.gt(0) ? "إثبات الإيراد وتكلفة البضاعة المباعة" : "تكلفة البضاعة المباعة"}`, lines: jl }) : null;
   const [h] = await tx`UPDATE delivery_notes SET status = 'POSTED', doc_no = ${docNo}, posted_by = ${who.userId}, posted_at = now(), journal_entry_id = ${je}, version = version + 1, updated_at = now() WHERE id = ${id} RETURNING id, doc_no AS "docNo", status`;
   await audit(tx, actor, { action: "delivery.post", entityType: "delivery_note", entityId: id, after: { docNo, cogs: cogs.toString() } });
   return { ...(h as Record<string, any>), cogsBase: cogs.toString() } as Record<string, any>;

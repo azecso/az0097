@@ -21,34 +21,53 @@ const partnerRow = async (tx: Tx, kind: "OWNER" | "PARTNER") => (await tx`SELECT
 //   A  signed manual adjustment (documented)         R  amount the owner reserves (documented)         L  loss carried in
 //   B = E − X + A ;  B<0 => loss carried out, D=0 ;  else cover=min(L,B), D = max(B − cover − R, 0), then 50/50 (partner floors, owner remainder)
 // ============================================================================================================
-export const settlementInput = z.object({ periodStart: dateStr, periodEnd: dateStr, reserved: moneyStr.default("0"), reservedReason: z.string().max(300).nullish(), adjustments: z.string().regex(/^-?\d{1,14}(\.\d{1,4})?$/).default("0"), notes: z.string().max(500).nullish() });
+export const settlementInput = z.object({ periodStart: dateStr, periodEnd: dateStr, reserved: moneyStr.default("0"), reservedReason: z.string().max(300).nullish(), releaseReserve: moneyStr.default("0"), releaseReason: z.string().max(300).nullish(), adjustments: z.string().regex(/^-?\d{1,14}(\.\d{1,4})?$/).default("0"), notes: z.string().max(500).nullish() });
+
+/** Reserve balance = everything the owner held back in approved settlements − everything released again (documented, never lost). */
+export async function reserveBalance(tx: Tx) {
+  const [r] = await tx`SELECT COALESCE(sum(reserved - reserve_released), 0)::text AS v FROM profit_settlements WHERE status = 'POSTED'`;
+  return d(r!.v);
+}
 
 export async function computeSettlement(tx: Tx, i: z.infer<typeof settlementInput>) {
   if (i.periodEnd < i.periodStart) throw badRequest("BAD_PERIOD", "نهاية الفترة قبل بدايتها");
   if (d(i.reserved).gt(0) && !(i.reservedReason ?? "").trim()) throw badRequest("RESERVED_REASON_REQUIRED", "المبلغ المحجوز يتطلب سبباً مكتوباً");
+  const Rel = d(i.releaseReserve ?? "0");
+  if (Rel.gt(0) && !(i.releaseReason ?? "").trim()) throw badRequest("RELEASE_REASON_REQUIRED", "تحرير مبلغ محجوز يتطلب سبباً مكتوباً");
   const [prev] = await tx`SELECT period_end::text AS pe, deductions_cum::text AS dc, loss_carried_out::text AS lco FROM profit_settlements WHERE status = 'POSTED' ORDER BY period_end DESC LIMIT 1`;
   if (prev && i.periodStart <= prev.pe) throw conflict("PERIOD_OVERLAP", `الفترة تتداخل مع تسوية معتمدة سابقة (تنتهي ${prev.pe})`);
+  const resBefore = await reserveBalance(tx);
+  if (Rel.gt(resBefore)) throw conflict("RELEASE_EXCEEDS_RESERVE", `المبلغ المطلوب تحريره يتجاوز رصيد الحجز (${resBefore})`);
+  // Cut-off: only documents dated on or before periodEnd count. Later collections/deliveries/returns belong to a later settlement.
   const invs = await tx`SELECT id, doc_no FROM sales_invoices WHERE status = 'POSTED' AND NOT is_opening AND doc_date <= ${i.periodEnd} ORDER BY doc_date, doc_no`;
   const lines: { invoiceId: string; docNo: string; adjustedProfit: string; ratio: string; linked: string; before: string; newly: string; after: string }[] = [];
   let E = d(0);
   for (const inv of invs) {
-    const p = await invoiceProfit(tx, inv.id);
+    const p = await invoiceProfit(tx, inv.id, i.periodEnd);
     const before = d((await tx`SELECT COALESCE(sum(l.newly_released), 0)::text AS v FROM profit_settlement_lines l JOIN profit_settlements s ON s.id = l.settlement_id WHERE l.invoice_id = ${inv.id} AND s.status = 'POSTED'`)[0]!.v);
-    const ext = d((await tx`SELECT COALESCE(sum(a.amount), 0)::text AS v FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = ${inv.id} AND a.external AND cr.status = 'POSTED'`)[0]!.v);
-    const linked = d(p.linkedProfitBase), room = Decimal.max(linked.minus(before), 0), newly = linked.minus(before).minus(Decimal.min(ext, room));          // profit already distributed outside the system is never distributed again
+    // profit already distributed outside the system (receipt "external" allocations) is never distributed again; it counts only up to the cut-off
+    const ext = d((await tx`SELECT COALESCE(sum(a.amount), 0)::text AS v FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = ${inv.id} AND a.external AND cr.status = 'POSTED' AND cr.doc_date <= ${i.periodEnd}`)[0]!.v);
+    const linked = d(p.linkedProfitBase), room = Decimal.max(linked.minus(before), 0), newly = linked.minus(before).minus(Decimal.min(ext, room));
     if (newly.isZero()) continue;
-    lines.push({ invoiceId: inv.id, docNo: inv.doc_no, adjustedProfit: p.adjustedProfitBase, ratio: p.collectedRatio, linked: linked.toString(), before: before.toString(), newly: newly.toString(), after: linked.toString() });
+    lines.push({ invoiceId: inv.id, docNo: inv.doc_no, adjustedProfit: p.adjustedProfitBase, ratio: p.collectedRatio, linked: linked.toString(), before: before.toString(), newly: newly.toString(), after: before.plus(newly).toString() });
     E = E.plus(newly);
   }
   const [led] = await tx`SELECT COALESCE(sum(jl.debit_base - jl.credit_base), 0)::text AS v FROM journal_lines jl JOIN journal_entries je ON je.id = jl.entry_id JOIN accounts a ON a.id = jl.account_id
     WHERE (a.type = 'EXPENSE' OR a.code IN ('5200','7100')) AND je.entry_date <= ${i.periodEnd}`;
   const cumNow = d(led!.v), X = cumNow.minus(prev?.dc ?? 0), A = d(i.adjustments), L = d(prev?.lco ?? 0), R = d(i.reserved);
-  const B = E.minus(X).plus(A);
+  const B = E.minus(X).plus(A).plus(Rel);
   let D = d(0), covered = d(0), Lout = L;
   if (B.lt(0)) Lout = L.plus(B.abs());
-  else { covered = Decimal.min(L, B); Lout = L.minus(covered); D = Decimal.max(B.minus(covered).minus(R), 0); }
+  else {
+    covered = Decimal.min(L, B); Lout = L.minus(covered);
+    const room = B.minus(covered);
+    if (R.gt(room)) throw conflict("RESERVE_EXCEEDS_DISTRIBUTABLE", `المبلغ المحجوز (${R}) يتجاوز الربح القابل للتوزيع بعد تغطية الخسائر (${room})`);
+    D = room.minus(R);
+  }
   const sh = split5050(D, "IQD");
-  return { eligibleProfit: E.toString(), deductions: X.toString(), deductionsCum: cumNow.toString(), adjustments: A.toString(), lossCarriedIn: L.toString(), reserved: R.toString(), periodResult: B.toString(),
+  const reserveAfter = resBefore.plus(B.lt(0) ? 0 : R).minus(Rel);
+  return { eligibleProfit: E.toString(), deductions: X.toString(), deductionsCum: cumNow.toString(), adjustments: A.toString(), lossCarriedIn: L.toString(), reserved: B.lt(0) ? "0" : R.toString(), reserveReleased: Rel.toString(),
+    reserveBefore: resBefore.toString(), reserveAfter: reserveAfter.toString(), periodResult: B.toString(),
     lossCovered: covered.toString(), lossCarriedOut: Lout.toString(), distributable: D.toString(), partnerShare: sh.partner.toString(), ownerShare: sh.owner.toString(), lines };
 }
 
@@ -56,8 +75,8 @@ export const previewSettlement = (tx: Tx, i: z.infer<typeof settlementInput>) =>
 
 export async function createSettlementDraft(tx: Tx, who: Principal, actor: Actor, i: z.infer<typeof settlementInput>) {
   const c = await computeSettlement(tx, i);
-  const [s] = await tx`INSERT INTO profit_settlements(company_id, draft_ref, period_start, period_end, eligible_profit, deductions, deductions_cum, adjustments, loss_carried_in, reserved, reserved_reason, loss_covered, loss_carried_out, distributable, notes, created_by)
-    VALUES (${who.companyId}, ${draftRef()}, ${i.periodStart}, ${i.periodEnd}, ${c.eligibleProfit}, ${c.deductions}, ${c.deductionsCum}, ${c.adjustments}, ${c.lossCarriedIn}, ${c.reserved}, ${i.reservedReason ?? null}, ${c.lossCovered}, ${c.lossCarriedOut}, ${c.distributable}, ${i.notes ?? null}, ${who.userId})
+  const [s] = await tx`INSERT INTO profit_settlements(company_id, draft_ref, period_start, period_end, eligible_profit, deductions, deductions_cum, adjustments, loss_carried_in, reserved, reserved_reason, loss_covered, loss_carried_out, distributable, reserve_released, reserve_release_reason, notes, created_by)
+    VALUES (${who.companyId}, ${draftRef()}, ${i.periodStart}, ${i.periodEnd}, ${c.eligibleProfit}, ${c.deductions}, ${c.deductionsCum}, ${c.adjustments}, ${c.lossCarriedIn}, ${c.reserved}, ${i.reservedReason ?? null}, ${c.lossCovered}, ${c.lossCarriedOut}, ${c.distributable}, ${c.reserveReleased}, ${i.releaseReason ?? null}, ${i.notes ?? null}, ${who.userId})
     RETURNING id, draft_ref AS "draftRef", version`;
   await audit(tx, actor, { action: "settlement.create_draft", entityType: "profit_settlement", entityId: s!.id, after: { ...i, preview: { distributable: c.distributable } } });
   return { ...s!, preview: c };
@@ -86,7 +105,7 @@ export async function approveSettlement(tx: Tx, who: Principal, actor: Actor, id
   const [s] = await tx`SELECT * FROM profit_settlements WHERE id = ${id} FOR UPDATE`;
   if (!s) throw notFound();
   if (s.status !== "DRAFT") throw conflict("NOT_DRAFT", "التسوية ليست مسودة — لا يمكن اعتماد نفس التسوية مرتين");
-  const c = await computeSettlement(tx, { periodStart: dateOf(s.period_start), periodEnd: dateOf(s.period_end), reserved: s.reserved, reservedReason: s.reserved_reason, adjustments: s.adjustments, notes: s.notes });
+  const c = await computeSettlement(tx, { periodStart: dateOf(s.period_start), periodEnd: dateOf(s.period_end), reserved: s.reserved, reservedReason: s.reserved_reason, releaseReserve: s.reserve_released, releaseReason: s.reserve_release_reason, adjustments: s.adjustments, notes: s.notes });
   const docNo = (await tx`SELECT next_document_number(${who.companyId}, 'profit_settlement', ${yearOf(dateOf(s.period_end))}) AS n`)[0]!.n as string;
   for (const l of c.lines)
     await tx`INSERT INTO profit_settlement_lines(company_id, settlement_id, invoice_id, adjusted_profit, collected_ratio, linked_profit, released_before, newly_released, released_after)
@@ -98,7 +117,7 @@ export async function approveSettlement(tx: Tx, who: Principal, actor: Actor, id
     je = await postJournal(tx, actor, { date: dateOf(s.period_end), sourceDocType: "profit_settlement", sourceDocId: id, memo: `تسوية أرباح ${docNo}`,
       lines: [{ account: "3400", debit: c.distributable }, { account: "2500", credit: c.ownerShare, partnerId: owner.id, memo: "حصة المالك" }, { account: "2500", credit: c.partnerShare, partnerId: partner.id, memo: "حصة الشريك" }] });
   const [h] = await tx`UPDATE profit_settlements SET status = 'POSTED', doc_no = ${docNo}, eligible_profit = ${c.eligibleProfit}, deductions = ${c.deductions}, deductions_cum = ${c.deductionsCum}, loss_carried_in = ${c.lossCarriedIn},
-      loss_covered = ${c.lossCovered}, loss_carried_out = ${c.lossCarriedOut}, distributable = ${c.distributable}, approved_by = ${who.userId}, approved_at = now(), journal_entry_id = ${je}, version = version + 1, updated_at = now() WHERE id = ${id} RETURNING id, doc_no AS "docNo", status`;
+      loss_covered = ${c.lossCovered}, loss_carried_out = ${c.lossCarriedOut}, distributable = ${c.distributable}, reserved = ${c.reserved}, reserve_released = ${c.reserveReleased}, approved_by = ${who.userId}, approved_at = now(), journal_entry_id = ${je}, version = version + 1, updated_at = now() WHERE id = ${id} RETURNING id, doc_no AS "docNo", status`;
   await audit(tx, actor, { action: "settlement.approve", entityType: "profit_settlement", entityId: id, after: { docNo, ...c, lines: c.lines.length } });
   return { ...h!, ...c };
 }

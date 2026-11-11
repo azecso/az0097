@@ -45,7 +45,7 @@ export async function dashboard(tx: Tx, q: { from?: string; to?: string }) {
   // distributable profit RIGHT NOW (what a settlement through today would release), 0 reserved
   let settlement: Record<string, string> | null = null;
   try { const last = (await tx`SELECT period_end::text AS pe FROM profit_settlements WHERE status = 'POSTED' ORDER BY period_end DESC LIMIT 1`)[0];
-    const start = last ? iso(new Date(Date.parse(last.pe) + 86400000)) : "2000-01-01"; const c = await computeSettlement(tx, { periodStart: start, periodEnd: iso(new Date()), reserved: "0", adjustments: "0" });
+    const start = last ? iso(new Date(Date.parse(last.pe) + 86400000)) : "2000-01-01"; const c = await computeSettlement(tx, { periodStart: start, periodEnd: iso(new Date()), reserved: "0", releaseReserve: "0", adjustments: "0" });
     settlement = { eligibleProfit: c.eligibleProfit, deductions: c.deductions, distributable: c.distributable, ownerShare: c.ownerShare, partnerShare: c.partnerShare, lossCarriedIn: c.lossCarriedIn, lossCarriedOut: c.lossCarriedOut }; } catch { settlement = null; }
   const liq = await distributableLiquidity(tx);
 

@@ -27,7 +27,7 @@ export async function profitOverview(tx: Tx) {
   const [prev] = await tx`SELECT period_end::text AS pe FROM profit_settlements WHERE status = 'POSTED' ORDER BY period_end DESC LIMIT 1`;
   const periodStart = prev ? nextDay(prev.pe) : "2000-01-01";
   const periodEnd = [today(), periodStart].sort().pop()!;                                  // never before the start (a settlement already approved today)
-  const live = await computeSettlement(tx, { periodStart, periodEnd, reserved: "0", adjustments: "0" });
+  const live = await computeSettlement(tx, { periodStart, periodEnd, reserved: "0", releaseReserve: "0", adjustments: "0" });
   const exp = await tx`SELECT a.code, a.name, sum(jl.debit_base - jl.credit_base)::text AS amount
     FROM journal_lines jl JOIN journal_entries je ON je.id = jl.entry_id JOIN accounts a ON a.id = jl.account_id
     WHERE (a.type = 'EXPENSE' OR a.code IN ('5200','7100')) AND je.entry_date <= ${periodEnd} AND (${prev?.pe ?? null}::date IS NULL OR je.entry_date > ${prev?.pe ?? null}::date)
