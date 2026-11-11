@@ -11,7 +11,7 @@ interface Contact { id: string; name: string; kind: string }
 interface Cash { id: string; name: string; currency: string; kind: string }
 interface Loc { id: string; name: string; kind: string }
 interface Charge { kind: string; description: string; amount: string; capitalize: boolean }
-interface Line { productId: string; uom: string; qty: string; unitPrice: string; locationId: string }
+interface Line { productId: string; uom: string; qty: string; unitPrice: string; locationId: string; profitClass: string }
 function Inner() {
   const router = useRouter(); const { msg, busy, run } = useAction();
   const [newProds, setNewProds] = useState<Prod[]>([]); const prodsLoaded = useLoad<Prod[]>("/api/products", []).data, sup = useLoad<Contact[]>("/api/contacts?kind=SUPPLIER", []).data; const prods = [...prodsLoaded, ...newProds];
@@ -20,17 +20,17 @@ function Inner() {
   const [cur, setCur] = useState("IQD"); const [type, setType] = useState("CASH");
   const policy = useLoad<{ landedCostPolicy: string } | null>("/api/company", null).data?.landedCostPolicy ?? "EXCLUDE";
   const [charges, setCharges] = useState<Charge[]>([]);
-  const [lines, setLines] = useState<Line[]>([{ productId: "", uom: "", qty: "", unitPrice: "", locationId: "" }]);
+  const [lines, setLines] = useState<Line[]>([{ productId: "", uom: "", qty: "", unitPrice: "", locationId: "", profitClass: "PARTNERSHIP" }]);
   const tr = (v: string | null | undefined) => (v && v.includes(".") ? v.replace(/\.?0+$/, "") : v ?? "");
   useEffect(() => { if (!ex || (editId && ex.status !== "DRAFT")) return; setType(ex.paymentType); setCur(ex.currency);
-    setLines(ex.lines.map((l: any) => ({ productId: l.productId, uom: l.uom, qty: tr(l.qty), unitPrice: tr(l.unitPrice), locationId: l.locationId ?? "" })));
+    setLines(ex.lines.map((l: any) => ({ productId: l.productId, uom: l.uom, qty: tr(l.qty), unitPrice: tr(l.unitPrice), locationId: l.locationId ?? "", profitClass: l.profitClass ?? "PARTNERSHIP" })));
     setCharges((ex.charges ?? []).map((c: any) => ({ kind: c.kind, description: c.description ?? "", amount: tr(c.amount), capitalize: !!c.capitalize }))); }, [ex]);
   const upd = (i: number, k: keyof Line, v: string) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, [k]: v, ...(k === "productId" ? { uom: prods.find((p) => p.id === v)?.baseUom ?? "" } : {}) } : l)));
   async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault(); const f = new FormData(e.currentTarget);
     const payload = { supplierId: String(f.get("supplier")), docDate: String(f.get("date")), paymentType: type,
       cashAccountId: type === "CASH" ? String(f.get("cash")) : null, dueDate: type === "CREDIT" && f.get("due") ? String(f.get("due")) : null, currency: cur, exchangeRate: cur === "IQD" ? null : String(f.get("rate") || "") || null,
-      supplierInvoiceNo: String(f.get("inv") ?? "") || null, lines: lines.map((l) => ({ productId: l.productId, uom: l.uom, qty: l.qty, unitPrice: l.unitPrice, locationId: l.locationId || null })), charges: charges.filter((c) => c.amount).map((c) => ({ kind: c.kind, description: c.description || null, amount: c.amount, capitalize: c.capitalize })) };
+      supplierInvoiceNo: String(f.get("inv") ?? "") || null, lines: lines.map((l) => ({ productId: l.productId, uom: l.uom, qty: l.qty, unitPrice: l.unitPrice, locationId: l.locationId || null, profitClass: l.profitClass })), charges: charges.filter((c) => c.amount).map((c) => ({ kind: c.kind, description: c.description || null, amount: c.amount, capitalize: c.capitalize })) };
     if (editId) { if (!ex) return; const u = await run(() => api(`/api/purchases/${editId}`, { method: "PUT", body: { ...payload, version: ex.version } }), "تم حفظ التعديل"); if (u !== undefined) router.push(`/purchases/${editId}`); return; }
     const r = await run(() => api<{ id: string }>("/api/purchases", { method: "POST", body: payload }), "تم حفظ المسودة");
     if (r) router.push(`/purchases/${r.id}`);
@@ -58,10 +58,11 @@ function Inner() {
           <div><label>الوحدة</label><select value={l.uom} onChange={(e) => upd(i, "uom", e.target.value)}>{p && [p.baseUom, ...p.uoms.map((u) => u.uom)].map((u) => <option key={u}>{u}</option>)}</select></div>
           <div><label>الكمية</label><input value={l.qty} onChange={(e) => upd(i, "qty", e.target.value)} inputMode="decimal" dir="ltr" required /></div>
           <div><label>سعر الوحدة ({cur})</label><input value={l.unitPrice} onChange={(e) => upd(i, "unitPrice", e.target.value)} inputMode="decimal" dir="ltr" required /></div>
+          <div><label>نوع البند</label><select value={l.profitClass} onChange={(e) => upd(i, "profitClass", e.target.value)} aria-label="نوع البند"><option value="PARTNERSHIP">عادي (ضمن الشراكة)</option><option value="USED">مستعمل (خارج أرباح الشراكة)</option></select></div>
           <div><label>موقع الاستلام</label><select value={l.locationId} onChange={(e) => upd(i, "locationId", e.target.value)}><option value="">الرئيسي</option>{locs.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
           {lines.length > 1 && <button type="button" className="danger" onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>حذف البند</button>}
         </div>); })}
-      <button type="button" onClick={() => setLines((ls) => [...ls, { productId: "", uom: "", qty: "", unitPrice: "", locationId: "" }])}>+ بند</button>
+      <button type="button" onClick={() => setLines((ls) => [...ls, { productId: "", uom: "", qty: "", unitPrice: "", locationId: "", profitClass: "PARTNERSHIP" }])}>+ بند</button>
       <h2>تكاليف إضافية (نقل، تحميل، جمارك…)</h2>
       <p>اختر لكل بند: <strong>تُضاف إلى كلفة المخزون</strong> (تُوزَّع على مواد هذه الفاتورة بنسبة قيمتها) أو <strong>مصروف</strong>. الافتراضي حسب إعداد الشركة. المبلغ يُضاف إلى مستحق المورد.</p>
       {charges.map((c, i) => (<div className="row card" key={i}>

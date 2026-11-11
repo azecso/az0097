@@ -8,7 +8,7 @@ import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
 import { Attach } from "@/components/attach";
 import { PayPurchaseDialog } from "@/components/pay-dialog";
 
-interface Line { id: string; lineNo: number; productCode: string; productName: string; uom: string; qty: string; qtyBase: string; unitPrice: string; lineTotal: string; lineTotalBase: string }
+interface Line { id: string; lineNo: number; productCode: string; productName: string; uom: string; qty: string; qtyBase: string; unitPrice: string; lineTotal: string; lineTotalBase: string; profitClass?: string }
 interface Doc { id: string; docNo: string | null; draftRef: string; docDate: string; supplierName: string; paymentType: string; currency: string; exchangeRate: string; total: string; totalBase: string; status: string; version: number; lines: Line[]; charges: { kind: string; description: string | null; amount: string; capitalize: boolean }[]; paid?: string; returned?: string; outstanding?: string; supplierInvoiceNo: string | null; cashAccountId: string | null }
 export default function PurchaseView() {
   const { id } = useParams<{ id: string }>(); const router = useRouter(); const me = useMe();
@@ -27,7 +27,7 @@ export default function PurchaseView() {
       {d.outstanding !== undefined && d.paymentType === "CREDIT" && <div><div className="label">المتبقي للسداد</div><strong className="num">{money(d.outstanding)} {d.currency}</strong></div>}
     </div>
     <div className="card cards-as-list" style={{ marginTop: 12 }}><table><thead><tr><th>#</th><th>المادة</th><th>الكمية</th><th>الكمية الأساسية</th><th>السعر</th><th>الإجمالي</th></tr></thead>
-      <tbody>{d.lines.map((l) => <tr key={l.id}><td>{l.lineNo}</td><td>{l.productCode} — {l.productName}</td><td><span className="num">{money(l.qty)} {l.uom}</span></td><td><span className="num">{money(l.qtyBase)}</span></td>
+      <tbody>{d.lines.map((l) => <tr key={l.id}><td>{l.lineNo}</td><td>{l.productCode} — {l.productName}{l.profitClass === "USED" ? <span className="badge"> مستعمل</span> : null}</td><td><span className="num">{money(l.qty)} {l.uom}</span></td><td><span className="num">{money(l.qtyBase)}</span></td>
         <td><span className="num">{money(l.unitPrice)}</span></td><td><span className="num">{money(l.lineTotal)}</span></td></tr>)}</tbody></table></div>
     {d.charges.length > 0 && <div className="card" style={{ marginTop: 12 }}><h2>تكاليف إضافية</h2><table><tbody>{d.charges.map((c, i) => <tr key={i}><td>{{ TRANSPORT: "نقل", LOADING: "تحميل", CUSTOMS: "جمارك", OTHER: "أخرى" }[c.kind]} {c.description}</td><td><span className="num">{money(c.amount)} {d.currency}</span></td><td>{c.capitalize ? "ضمن كلفة المخزون" : "مصروف"}</td></tr>)}</tbody></table></div>}
     <MsgBox msg={msg} />

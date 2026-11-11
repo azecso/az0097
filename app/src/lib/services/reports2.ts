@@ -3,6 +3,7 @@ import { badRequest } from "../errors";
 import { d } from "../money";
 import { trialBalance } from "./reports";
 import { computeSettlement, partnersOverview } from "./settlements";
+import { invoiceProfit } from "./sales";
 
 /**
  * Report registry. Every report is defined ONCE here (title, definition, basis, filters, columns, rows, totals) and the screen, the A4 print/PDF and the Excel export all render this same result,
@@ -217,6 +218,9 @@ const profits: Def = { id: "profit-statement", title: "كشف الأرباح و�
     const paidBy = new Map((await tx`SELECT p.id, COALESCE(sum(po.amount) FILTER (WHERE po.status = 'POSTED'), 0)::text AS paid, COALESCE((SELECT sum(sh.share_amount) FROM profit_settlement_shares sh JOIN profit_settlements s ON s.id = sh.settlement_id WHERE sh.partner_id = p.id AND s.status = 'POSTED'), 0)::text AS approved FROM partners p LEFT JOIN profit_payouts po ON po.partner_id = p.id GROUP BY p.id`).map((r) => [r.id as string, r]));
     const rows: Row[] = []; const add = (label: string, v: string | null, grp = false) => rows.push({ label, amount: v, currency: "IQD", bold: grp ? "1" : null });
     add("1) الربح المحاسبي (الفترة المحددة)", null, true); add("الربح التجاري (إيراد معترف به − تكلفة المسلَّم − مرتجعات)", pick("= الربح التجاري (الإجمالي)")); add("± فروق الصرف المحققة", pick("± فروق الصرف المحققة (ربح +/خسارة −)")); add("صافي نتيجة النشاط (بعد المصاريف)", pick("= صافي نتيجة النشاط"));
+    const usedIds = await tx`SELECT DISTINCT invoice_id FROM sales_lines WHERE profit_class = 'USED'`; let used = d(0);
+    for (const r of usedIds) used = used.plus((await invoiceProfit(tx, r.invoice_id as string)).usedProfitBase);
+    add("منه: ربح المستعمل (مستبعد من الشراكة، يبقى في الحسابات)", used.toString());
     add("2) الربح المؤهل للتوزيع (حتى اليوم، منذ آخر تسوية معتمدة)", null, true); add("ربح مؤهل جديد (فواتير مسدَّدة ومسلَّمة بالكامل)", live.eligibleProfit); add("ربح غير مؤهل بعد (لم تُسدَّد أو تُسلَّم بالكامل)", live.pendingProfit);
     add("− مصاريف وبنود مستحقة منذ آخر تسوية", live.deductions); add("خسارة مرحَّلة سابقة", live.lossCarriedIn); add("رصيد الحجز", live.reserveBefore); add("= القابل للتوزيع الآن (قبل أي حجز جديد)", live.distributable, true);
     add("3) السيولة القابلة للدفع (دينار)", ov.liquidity.available, true);

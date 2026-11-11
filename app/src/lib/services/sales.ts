@@ -37,33 +37,36 @@ export async function invoiceFinancials(tx: Tx, invoiceId: string, asOf: string 
  *  - it is a RESTRICTION indicator for distributing profit, not new accounting profit. Zero/negative earned value => 0.
  */
 export async function invoiceProfit(tx: Tx, invoiceId: string, asOf: string = FOREVER) {
-  const zero = { grossProfitBase: "0", adjustedProfitBase: "0", collectedRatio: "0", linkedProfitBase: "0", deliveredRatio: "0", recognizedNetBase: "0", recognizedNetOrig: "0", cogsBase: "0" };
+  const zero = { grossProfitBase: "0", adjustedProfitBase: "0", collectedRatio: "0", linkedProfitBase: "0", deliveredRatio: "0", recognizedNetBase: "0", recognizedNetOrig: "0", cogsBase: "0", usedProfitBase: "0" };
   if ((await tx`SELECT is_opening FROM sales_invoices WHERE id = ${invoiceId}`)[0]?.is_opening) return zero;   // opening balances carry no profit
   const fin = await invoiceFinancials(tx, invoiceId, asOf);
-  const lines = await tx`SELECT sl.id, sl.qty_base::text AS q, sl.net_line_base::text AS nb, sl.net_line_orig::text AS no,
+  // per line: delivered share, cost of what was delivered, returns — so USED lines can be kept out of the partnership profit while everything else stays in the books
+  const lines = await tx`SELECT sl.id, sl.profit_class AS cls, sl.qty_base::text AS q, sl.net_line_base::text AS nb, sl.net_line_orig::text AS no,
       COALESCE((SELECT sum(dl.qty_base) FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id WHERE dl.sales_line_id = sl.id AND dn.status = 'POSTED' AND dn.doc_date <= ${asOf}), 0)::text AS dq,
-      COALESCE((SELECT sum(dl.cost_base) FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id WHERE dl.sales_line_id = sl.id AND dn.status = 'POSTED' AND dn.doc_date <= ${asOf}), 0)::text AS cogs
+      COALESCE((SELECT sum(dl.cost_base) FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id WHERE dl.sales_line_id = sl.id AND dn.status = 'POSTED' AND dn.doc_date <= ${asOf}), 0)::text AS cogs,
+      COALESCE((SELECT sum(rl.value_base) FROM sales_return_lines rl JOIN sales_returns r ON r.id = rl.return_id WHERE rl.sales_line_id = sl.id AND r.status = 'POSTED' AND r.doc_date <= ${asOf}), 0)::text AS rv,
+      COALESCE((SELECT sum(rl.cost_base) FROM sales_return_lines rl JOIN sales_returns r ON r.id = rl.return_id WHERE rl.sales_line_id = sl.id AND r.status = 'POSTED' AND r.doc_date <= ${asOf}), 0)::text AS rc
     FROM sales_lines sl WHERE sl.invoice_id = ${invoiceId}`;
-  const [ret] = await tx`SELECT COALESCE(sum(value_base), 0)::text AS vb, COALESCE(sum(cogs_base), 0)::text AS cg FROM sales_returns WHERE invoice_id = ${invoiceId} AND status = 'POSTED' AND doc_date <= ${asOf}`;
-  let recB = d(0), recO = d(0), cogs = d(0), qAll = d(0), qDel = d(0);
+  let recB = d(0), recO = d(0), cogs = d(0), qAll = d(0), qDel = d(0), retB = d(0), retC = d(0), usedProfit = d(0);
   for (const l of lines) {
     const full = d(l.dq).gte(l.q);
-    recB = recB.plus(full ? l.nb : roundMoney(d(l.nb).mul(l.dq).div(l.q), "IQD"));
-    recO = recO.plus(full ? l.no : d(l.no).mul(l.dq).div(l.q));
-    cogs = cogs.plus(l.cogs); qAll = qAll.plus(l.q); qDel = qDel.plus(l.dq);
+    const rb = full ? d(l.nb) : roundMoney(d(l.nb).mul(l.dq).div(l.q), "IQD"), ro = full ? d(l.no) : d(l.no).mul(l.dq).div(l.q);
+    qAll = qAll.plus(l.q); qDel = qDel.plus(l.dq); recO = recO.plus(ro);                       // the invoice as a whole (payment test) includes every line
+    if (l.cls === "USED") { usedProfit = usedProfit.plus(rb.minus(l.rv)).minus(d(l.cogs).minus(l.rc)); continue; }       // used goods: profit stays in the accounts, out of the partnership
+    recB = recB.plus(rb); cogs = cogs.plus(l.cogs); retB = retB.plus(l.rv); retC = retC.plus(l.rc);
   }
-  const adjRecB = recB.minus(ret!.vb), adjCogs = cogs.minus(ret!.cg), adjRecO = recO.minus(fin.returned);
+  const adjRecB = recB.minus(retB), adjCogs = cogs.minus(retC), adjRecO = recO.minus(fin.returned);
   const grossProfit = recB.minus(cogs), adjustedProfit = adjRecB.minus(adjCogs);
   // Policy (owner decision): profit of an invoice becomes eligible for distribution ONLY when it is fully paid AND fully delivered. Partial collection is just a collection.
   const fullyDelivered = lines.length > 0 && lines.every((l) => d(l.dq).gte(l.q));
   const fullyPaid = d(fin.netCollected).gte(adjRecO) && adjRecO.gt(0);
   const ratio = fullyDelivered && fullyPaid ? d(1) : d(0);
   return { grossProfitBase: grossProfit.toString(), adjustedProfitBase: adjustedProfit.toString(), collectedRatio: ratio.toDecimalPlaces(8).toString(), linkedProfitBase: roundMoney(adjustedProfit.mul(ratio), "IQD").toString(),
-    deliveredRatio: qAll.gt(0) ? qDel.div(qAll).toDecimalPlaces(8).toString() : "0", recognizedNetBase: adjRecB.toString(), recognizedNetOrig: adjRecO.toDecimalPlaces(4).toString(), cogsBase: adjCogs.toString() };
+    deliveredRatio: qAll.gt(0) ? qDel.div(qAll).toDecimalPlaces(8).toString() : "0", recognizedNetBase: adjRecB.toString(), recognizedNetOrig: adjRecO.toDecimalPlaces(4).toString(), cogsBase: adjCogs.toString(), usedProfitBase: usedProfit.toString() };
 }
 
 // =========================== invoices ===========================
-const lineIn = z.object({ productId: uuid, uom: z.string().min(1).max(30), qty: qtyStr, unitPrice: moneyStr, lineDiscount: moneyStr.default("0"), locationId: uuid.nullish() });
+const lineIn = z.object({ productId: uuid, uom: z.string().min(1).max(30), qty: qtyStr, unitPrice: moneyStr, lineDiscount: moneyStr.default("0"), locationId: uuid.nullish(), profitClass: z.enum(["PARTNERSHIP", "USED"]).default("PARTNERSHIP") });
 export const invoiceSchema = z.object({
   customerId: uuid, docDate: dateStr, saleType: z.enum(["CASH", "CREDIT"]), cashAccountId: uuid.nullish(), dueDate: dateStr.nullish(), eventDate: dateStr.nullish(),
   currency: currencyCode, exchangeRate: rateStr.nullish(), deliveryMode: z.enum(["WITH_INVOICE", "SEPARATE"]).default("WITH_INVOICE"),
@@ -98,8 +101,8 @@ async function prepareInvoice(tx: Tx, i: z.infer<typeof invoiceSchema>) {
 async function writeInvLines(tx: Tx, companyId: string, id: string, lines: Awaited<ReturnType<typeof prepareInvoice>>["lines"]) {
   await tx`DELETE FROM sales_lines WHERE invoice_id = ${id}`;
   let n = 0;
-  for (const l of lines) { n += 1; await tx`INSERT INTO sales_lines(company_id, invoice_id, line_no, product_id, uom, qty, qty_base, unit_price, line_discount, line_total, location_id)
-    VALUES (${companyId}, ${id}, ${n}, ${l.productId}, ${l.uom}, ${l.qty}, ${l.qtyBase}, ${l.unitPrice}, ${l.lineDiscount}, ${l.lineTotal}, ${l.locationId})`; }
+  for (const l of lines) { n += 1; await tx`INSERT INTO sales_lines(company_id, invoice_id, line_no, product_id, uom, qty, qty_base, unit_price, line_discount, line_total, location_id, profit_class)
+    VALUES (${companyId}, ${id}, ${n}, ${l.productId}, ${l.uom}, ${l.qty}, ${l.qtyBase}, ${l.unitPrice}, ${l.lineDiscount}, ${l.lineTotal}, ${l.locationId}, ${l.profitClass})`; }
 }
 
 export async function createInvoice(tx: Tx, who: Principal, actor: Actor, i: z.infer<typeof invoiceSchema>) {
@@ -150,7 +153,7 @@ export async function getInvoice(tx: Tx, id: string) {
     FROM sales_invoices si JOIN contacts c ON c.id = si.customer_id WHERE si.id = ${id}`;
   if (!h) throw notFound();
   const lines = await tx`SELECT sl.id, sl.line_no AS "lineNo", sl.product_id AS "productId", p.code AS "productCode", p.name AS "productName", sl.uom, sl.qty::text, sl.qty_base::text AS "qtyBase", sl.unit_price::text AS "unitPrice",
-      sl.line_discount::text AS "lineDiscount", sl.line_total::text AS "lineTotal", sl.location_id AS "locationId",
+      sl.profit_class AS "profitClass", sl.line_discount::text AS "lineDiscount", sl.line_total::text AS "lineTotal", sl.location_id AS "locationId",
       COALESCE((SELECT sum(dl.qty_base) FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id WHERE dl.sales_line_id = sl.id AND dn.status = 'POSTED'), 0)::text AS delivered,
       COALESCE((SELECT sum(rl.qty_base) FROM sales_return_lines rl JOIN sales_returns r ON r.id = rl.return_id WHERE rl.sales_line_id = sl.id AND r.status = 'POSTED'), 0)::text AS returned
     FROM sales_lines sl JOIN products p ON p.id = sl.product_id WHERE sl.invoice_id = ${id} ORDER BY sl.line_no`;
@@ -315,7 +318,7 @@ export async function postDelivery(tx: Tx, who: Principal, actor: Actor, id: str
   const [inv] = await tx`SELECT status FROM sales_invoices WHERE id = ${dn.invoice_id} FOR UPDATE`;
   if (inv!.status !== "POSTED") throw conflict("INVOICE_NOT_POSTED");
   const date = dateOf(dn.doc_date);
-  const lines = await tx`SELECT dl.*, sl.product_id, sl.location_id, sl.qty_base AS sold FROM delivery_lines dl JOIN sales_lines sl ON sl.id = dl.sales_line_id WHERE dl.delivery_id = ${id} ORDER BY sl.product_id, dl.line_no`;
+  const lines = await tx`SELECT dl.*, sl.product_id, sl.location_id, sl.qty_base AS sold, sl.profit_class FROM delivery_lines dl JOIN sales_lines sl ON sl.id = dl.sales_line_id WHERE dl.delivery_id = ${id} ORDER BY sl.product_id, dl.line_no`;
   const docNo = (await tx`SELECT next_document_number(${who.companyId}, 'delivery_note', ${yearOf(date)}) AS n`)[0]!.n as string;
   const [invRow] = await tx`SELECT revenue_deferred, doc_date FROM sales_invoices WHERE id = ${dn.invoice_id}`;
   if (date < dateOf(invRow!.doc_date)) throw badRequest("DELIVERY_BEFORE_INVOICE", "تاريخ التسليم قبل تاريخ الفاتورة");
@@ -323,7 +326,7 @@ export async function postDelivery(tx: Tx, who: Principal, actor: Actor, id: str
   for (const l of lines) {
     const done = (await tx`SELECT COALESCE(sum(dl.qty_base), 0)::text AS q, COALESCE(sum(dl.revenue_net_base), 0)::text AS rn, COALESCE(sum(dl.revenue_gross_base), 0)::text AS rg FROM delivery_lines dl JOIN delivery_notes n ON n.id = dl.delivery_id WHERE dl.sales_line_id = ${l.sales_line_id} AND n.status = 'POSTED'`)[0]!;
     if (d(done.q).plus(l.qty_base).gt(l.sold)) throw conflict("DELIVERY_EXCEEDS_INVOICED", "الكمية المسلّمة تتجاوز المفوترة");
-    const out = await consumeFifo(tx, who.companyId, { productId: l.product_id, locationId: l.location_id, qtyBase: l.qty_base, type: "SALE_OUT", docType: "delivery_note", docId: id, docLineId: l.id, at: new Date(`${date}T12:00:00Z`), onOrBefore: date });
+    const out = await consumeFifo(tx, who.companyId, { productId: l.product_id, locationId: l.location_id, qtyBase: l.qty_base, type: "SALE_OUT", docType: "delivery_note", docId: id, docLineId: l.id, at: new Date(`${date}T12:00:00Z`), onOrBefore: date, profitClass: l.profit_class });
     let rn = d(0), rg = d(0);
     if (invRow!.revenue_deferred) {                                                  // the delivered share of the invoiced value (the last delivery takes the exact remainder)
       const [sl] = await tx`SELECT net_line_base, line_total_base, qty_base FROM sales_lines WHERE id = ${l.sales_line_id}`;
@@ -550,7 +553,7 @@ export async function convertQuote(tx: Tx, who: Principal, actor: Actor, id: str
   if (q.invoiceId) throw conflict("ALREADY_CONVERTED");
   const inv = await createInvoice(tx, who, actor, { customerId: q.customerId, docDate: o.docDate, saleType: o.saleType, cashAccountId: o.cashAccountId ?? null, currency: q.currency as "IQD" | "USD", exchangeRate: q.currency === "IQD" ? null : q.exchangeRate,
     deliveryMode: "WITH_INVOICE", discount: q.discount, terms: q.terms, notes: q.notes, quoteId: id,
-    lines: q.lines.map((l: any) => ({ productId: l.productId, uom: l.uom, qty: l.qty, unitPrice: l.unitPrice, lineDiscount: l.lineDiscount })) });
+    lines: q.lines.map((l: any) => ({ productId: l.productId, uom: l.uom, qty: l.qty, unitPrice: l.unitPrice, lineDiscount: l.lineDiscount, profitClass: "PARTNERSHIP" as const })) });
   await tx`UPDATE sales_quotes SET status = 'CONVERTED', invoice_id = ${inv.id}, version = version + 1, updated_at = now() WHERE id = ${id}`;
   await audit(tx, actor, { action: "sales_quote.convert", entityType: "sales_quote", entityId: id, after: { invoiceId: inv.id } });
   return inv;

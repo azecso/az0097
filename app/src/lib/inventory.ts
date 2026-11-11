@@ -21,14 +21,15 @@ async function movement(tx: Tx, companyId: string, m: { productId: string; locat
 export async function receiveLot(tx: Tx, companyId: string, a: {
   productId: string; locationId: string; originDocType: string; originDocId: string; originLineId?: string | null; receivedAt: Date | string;
   qtyBase: Decimal.Value; totalCostBase: Decimal.Value; unitCostOrig: Decimal.Value; currency: string; fx: Decimal.Value;
-  sourceLotId?: string | null; movement: MovementType;
+  sourceLotId?: string | null; movement: MovementType; profitClass?: "PARTNERSHIP" | "USED";
 }): Promise<string> {
   const qty = d(a.qtyBase), total = roundMoney(a.totalCostBase, "IQD");
   const unit = total.div(qty).toDecimalPlaces(4, Decimal.ROUND_HALF_UP);
   const [lot] = await tx`INSERT INTO stock_lots(company_id, product_id, location_id, source_lot_id, origin_doc_type, origin_doc_id, origin_line_id, received_at,
-      qty_received, qty_remaining, total_cost_base, cost_remaining_base, unit_cost_base, unit_cost_orig, currency, fx_rate_snapshot)
+      qty_received, qty_remaining, total_cost_base, cost_remaining_base, unit_cost_base, unit_cost_orig, currency, fx_rate_snapshot, profit_class)
     VALUES (${companyId}, ${a.productId}, ${a.locationId}, ${a.sourceLotId ?? null}, ${a.originDocType}, ${a.originDocId}, ${a.originLineId ?? null}, ${a.receivedAt as string},
-      ${qty.toString()}, ${qty.toString()}, ${total.toString()}, ${total.toString()}, ${unit.toString()}, ${d(a.unitCostOrig).toString()}, ${a.currency}, ${d(a.fx).toString()})
+      ${qty.toString()}, ${qty.toString()}, ${total.toString()}, ${total.toString()}, ${unit.toString()}, ${d(a.unitCostOrig).toString()}, ${a.currency}, ${d(a.fx).toString()},
+      COALESCE(${a.profitClass ?? null}::text, (SELECT profit_class FROM stock_lots WHERE id = ${a.sourceLotId ?? null}), 'PARTNERSHIP'))
     RETURNING id`;
   await movement(tx, companyId, { productId: a.productId, locationId: a.locationId, lotId: lot!.id, type: a.movement, qty, cost: total, docType: a.originDocType, docId: a.originDocId, at: a.receivedAt });
   return lot!.id as string;
@@ -57,13 +58,15 @@ export async function consumeFifo(tx: Tx, companyId: string, a: {
   productId: string; locationId: string; qtyBase: Decimal.Value; type: MovementType; docType: string; docId: string; docLineId: string; at: Date | string;
   /** Document date (YYYY-MM-DD): only layers received on or before this day may be consumed — an outflow never takes goods that had not arrived yet. */
   onOrBefore?: string;
+  /** A sale draws only from layers of its own class (PARTNERSHIP / USED). Transfers and counts pass nothing: any class, and the layer keeps its class. */
+  profitClass?: "PARTNERSHIP" | "USED";
 }): Promise<{ cost: Decimal; parts: Part[] }> {
   const by = a.onOrBefore ?? null;
   const lots = (await tx`SELECT ${LOT_COLS(tx)} FROM stock_lots WHERE product_id = ${a.productId} AND location_id = ${a.locationId} AND qty_remaining > 0
-                         AND (${by}::date IS NULL OR received_at < (${by}::date + 1)) ORDER BY received_at, seq FOR UPDATE`) as unknown as Lot[];
+                         AND (${by}::date IS NULL OR received_at < (${by}::date + 1)) AND (${a.profitClass ?? null}::text IS NULL OR profit_class = ${a.profitClass ?? null}) ORDER BY received_at, seq FOR UPDATE`) as unknown as Lot[];
   let need = d(a.qtyBase); const parts: Part[] = [];
   const available = lots.reduce((s, l) => s.plus(l.qty_remaining), d(0));
-  if (available.lt(need)) throw conflict("INSUFFICIENT_STOCK", by ? `المتاح حتى ${by}: ${available} أقل من المطلوب ${need}` : `المتاح ${available} أقل من المطلوب ${need}`);
+  if (available.lt(need)) throw conflict("INSUFFICIENT_STOCK", `المتاح${by ? ` حتى ${by}` : ""}${a.profitClass === "USED" ? " (مستعمل)" : ""}: ${available} أقل من المطلوب ${need}`);
   for (const lot of lots) {
     if (need.lte(0)) break;
     const take = Decimal.min(need, d(lot.qty_remaining));

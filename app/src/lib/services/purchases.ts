@@ -16,7 +16,7 @@ const stamp = (date: string) => `${date}T${new Date().toISOString().slice(11, 19
 export const purchaseSchema = z.object({
   supplierId: uuid, docDate: dateStr, paymentType: z.enum(["CASH", "CREDIT"]), cashAccountId: uuid.nullish(), dueDate: dateStr.nullish(),
   currency: currencyCode, exchangeRate: rateStr.nullish(), supplierInvoiceNo: z.string().max(60).nullish(), notes: z.string().max(1000).nullish(),
-  lines: z.array(z.object({ productId: uuid, uom: z.string().min(1).max(30), qty: qtyStr, unitPrice: moneyStr, locationId: uuid.nullish() })).min(1).max(200),
+  lines: z.array(z.object({ productId: uuid, uom: z.string().min(1).max(30), qty: qtyStr, unitPrice: moneyStr, locationId: uuid.nullish(), profitClass: z.enum(["PARTNERSHIP", "USED"]).default("PARTNERSHIP") })).min(1).max(200),
   // Extra costs billed with the invoice. capitalize=true adds them to the inventory cost of THIS purchase's layers; false expenses them.
   // When omitted, the company policy (landed_cost_policy) decides.
   charges: z.array(z.object({ kind: z.enum(["TRANSPORT", "LOADING", "CUSTOMS", "OTHER"]), description: z.string().max(200).nullish(), amount: moneyStr, capitalize: z.boolean().nullish() })).max(20).default([]),
@@ -61,8 +61,8 @@ async function writeLines(tx: Tx, companyId: string, id: string, lines: Awaited<
   let n = 0;
   for (const l of lines) {
     n += 1;
-    await tx`INSERT INTO purchase_lines(company_id, purchase_id, line_no, product_id, uom, qty, qty_base, unit_price, line_total, location_id)
-      VALUES (${companyId}, ${id}, ${n}, ${l.productId}, ${l.uom}, ${l.qty}, ${l.qtyBase}, ${l.unitPrice}, ${l.lineTotal}, ${l.locationId})`;
+    await tx`INSERT INTO purchase_lines(company_id, purchase_id, line_no, product_id, uom, qty, qty_base, unit_price, line_total, location_id, profit_class)
+      VALUES (${companyId}, ${id}, ${n}, ${l.productId}, ${l.uom}, ${l.qty}, ${l.qtyBase}, ${l.unitPrice}, ${l.lineTotal}, ${l.locationId}, ${l.profitClass})`;
   }
 }
 
@@ -118,7 +118,7 @@ export async function getPurchase(tx: Tx, id: string) {
       po.exchange_rate_snapshot::text AS "exchangeRate", po.total::text AS total, po.total_base::text AS "totalBase", po.status, po.version, po.notes
     FROM purchase_orders po JOIN contacts c ON c.id = po.supplier_id WHERE po.id = ${id}`;
   if (!h) throw notFound();
-  const lines = await tx`SELECT pl.id, pl.line_no AS "lineNo", pl.product_id AS "productId", p.code AS "productCode", p.name AS "productName", pl.uom, pl.qty::text, pl.qty_base::text AS "qtyBase",
+  const lines = await tx`SELECT pl.id, pl.profit_class AS "profitClass", pl.line_no AS "lineNo", pl.product_id AS "productId", p.code AS "productCode", p.name AS "productName", pl.uom, pl.qty::text, pl.qty_base::text AS "qtyBase",
       pl.unit_price::text AS "unitPrice", pl.line_total::text AS "lineTotal", pl.line_total_base::text AS "lineTotalBase", pl.location_id AS "locationId"
     FROM purchase_lines pl JOIN products p ON p.id = pl.product_id WHERE pl.purchase_id = ${id} ORDER BY pl.line_no`;
   const charges = await tx`SELECT kind, description, amount::text, capitalize, amount_base::text AS "amountBase" FROM purchase_charges WHERE purchase_id = ${id} ORDER BY line_no`;
@@ -174,7 +174,7 @@ export async function postPurchase(tx: Tx, who: Principal, actor: Actor, id: str
     const base = lineBase[i]!, landed = alloc[i]!;
     await tx`UPDATE purchase_lines SET line_total_base = ${base.toString()}, landed_cost_base = ${landed.toString()} WHERE id = ${l.id}`;
     await receiveLot(tx, who.companyId, { productId: l.product_id, locationId: l.location_id, originDocType: "purchase_order", originDocId: id, originLineId: l.id,
-      receivedAt: received, qtyBase: l.qty_base, totalCostBase: base.plus(landed), unitCostOrig: d(l.line_total).div(l.qty_base).toDecimalPlaces(4), currency: cur, fx, movement: "PURCHASE_IN" });
+      receivedAt: received, qtyBase: l.qty_base, totalCostBase: base.plus(landed), unitCostOrig: d(l.line_total).div(l.qty_base).toDecimalPlaces(4), currency: cur, fx, movement: "PURCHASE_IN", profitClass: l.profit_class });
     const acct = await inventoryAccountOf(tx, l.location_id);
     const cur_ = invByAcct.get(acct) ?? { base: d(0), orig: d(0) };
     const origShare = capBase.gt(0) ? capOrig.mul(landed).div(capBase) : d(0);

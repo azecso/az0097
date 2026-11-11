@@ -10,8 +10,8 @@ import { PickOrCreate } from "@/components/pick";
 
 interface Prod { id: string; code: string; name: string; baseUom: string; uoms: { uom: string }[]; defaultSalePrice: string | null; defaultCurrency?: string | null }
 interface Contact { id: string; name: string } interface Cash { id: string; name: string; currency: string; kind: string } interface Loc { id: string; name: string }
-interface Line { productId: string; uom: string; qty: string; unitPrice: string; lineDiscount: string; locationId: string; priceCur: string }   // priceCur = the currency the price was entered/defaulted in
-const blank: Line = { productId: "", uom: "", qty: "", unitPrice: "", lineDiscount: "", locationId: "", priceCur: "" };
+interface Line { productId: string; uom: string; qty: string; unitPrice: string; lineDiscount: string; locationId: string; priceCur: string; profitClass: string }   // priceCur = the currency the price was entered/defaulted in
+const blank: Line = { productId: "", uom: "", qty: "", unitPrice: "", lineDiscount: "", locationId: "", priceCur: "", profitClass: "PARTNERSHIP" };
 function Inner() {
   const router = useRouter(); const { msg, busy, run, setMsg } = useAction();
   const [newProds, setNewProds] = useState<Prod[]>([]); const prodsLoaded = useRefList<Prod>("products", "/api/products").data, cust = useRefList<Contact & { kind?: string }>("contacts", "/api/contacts?kind=CUSTOMER", (c) => c.kind !== "SUPPLIER").data, cash = useRefList<Cash>("cashAccounts", "/api/cash-accounts").data, locs = useRefList<Loc>("locations", "/api/locations").data; const prods = [...prodsLoaded, ...newProds];
@@ -19,7 +19,7 @@ function Inner() {
   const [type, setType] = useState("CREDIT"); const [cur, setCur] = useState("IQD"); const [lines, setLines] = useState<Line[]>([blank]); const [disc, setDisc] = useState("");
   const tr = (v: string | null | undefined) => (v && v.includes(".") ? v.replace(/\.?0+$/, "") : v ?? "");
   useEffect(() => { if (!ex || (editId && ex.status !== "DRAFT" && ex.status !== "POSTED")) return; setType(ex.saleType); setCur(ex.currency); setDisc(tr(ex.discount) === "0" ? "" : tr(ex.discount));
-    setLines(ex.lines.map((l: any) => ({ productId: l.productId, uom: l.uom, qty: tr(l.qty), unitPrice: tr(l.unitPrice), lineDiscount: tr(l.lineDiscount) === "0" ? "" : tr(l.lineDiscount), locationId: l.locationId ?? "", priceCur: ex.currency }))); }, [ex]);
+    setLines(ex.lines.map((l: any) => ({ productId: l.productId, uom: l.uom, qty: tr(l.qty), unitPrice: tr(l.unitPrice), lineDiscount: tr(l.lineDiscount) === "0" ? "" : tr(l.lineDiscount), locationId: l.locationId ?? "", priceCur: ex.currency, profitClass: l.profitClass ?? "PARTNERSHIP" }))); }, [ex]);
   const upd = (i: number, k: keyof Line, v: string) => setLines((ls) => ls.map((l, j) => {
     if (j !== i) return l; const nl: Line = { ...l, [k]: v };
     if (k === "productId") { const p = prods.find((x) => x.id === v); const pc = p?.defaultCurrency ?? "IQD"; nl.uom = p?.baseUom ?? ""; if (p?.defaultSalePrice && pc === cur) { nl.unitPrice = tr(p.defaultSalePrice); nl.priceCur = cur; } else { nl.unitPrice = ""; nl.priceCur = cur; } }
@@ -39,7 +39,7 @@ function Inner() {
     const payload = { customerId: String(f.get("customer")), docDate: String(f.get("date")), eventDate: String(f.get("event") ?? "") || null, saleType: type,
       cashAccountId: type === "CASH" ? String(f.get("cash")) : null, dueDate: type === "CREDIT" && f.get("due") ? String(f.get("due")) : null, currency: cur, exchangeRate: cur === "USD" ? String(f.get("rate") || "") || null : null,
       deliveryMode: String(f.get("mode")), discount: disc || "0", terms: String(f.get("terms") ?? "") || null, notes: String(f.get("notes") ?? "") || null,
-      lines: lines.map((l) => ({ productId: l.productId, uom: l.uom, qty: l.qty, unitPrice: l.unitPrice, lineDiscount: l.lineDiscount || "0", locationId: l.locationId || null })) };
+      lines: lines.map((l) => ({ productId: l.productId, uom: l.uom, qty: l.qty, unitPrice: l.unitPrice, lineDiscount: l.lineDiscount || "0", locationId: l.locationId || null, profitClass: l.profitClass })) };
     if (editId) { if (!ex) return; const posted = ex.status === "POSTED"; const u = await run(() => api<{ id: string }>(posted ? `/api/sales-invoices/${editId}/amend` : `/api/sales-invoices/${editId}`, { method: posted ? "POST" : "PUT", body: { ...payload, version: ex.version } }), "تم حفظ التعديل"); if (u !== undefined) router.push(`/sales/${posted ? u.id : editId}`); return; }
     const r = await run(() => createDraft({ entityType: "sales_invoice", endpoint: "/api/sales-invoices", title: "فاتورة بيع (أوفلاين)", payload }), "تم حفظ المسودة");
     if (r?.mode === "queued") { setMsg({ t: "ok", m: "📴 حُفظت على جهازك مشفّرة وبانتظار المزامنة — ستُرسل تلقائياً عند عودة الاتصال (تابعها من «المزامنة»)." }); setLines([blank]); setDisc(""); } else if (r) router.push(`/sales/${r.id}`);
@@ -70,6 +70,7 @@ function Inner() {
           <div><label>الكمية</label><input value={l.qty} onChange={(e) => upd(i, "qty", e.target.value)} inputMode="decimal" dir="ltr" required /></div>
           <div><label>السعر ({cur})</label><input value={l.unitPrice} onChange={(e) => upd(i, "unitPrice", e.target.value)} inputMode="decimal" dir="ltr" required aria-invalid={stale[i] || undefined} />{stale[i] && <small role="alert" style={{ color: "var(--danger, #b3261e)" }}>السعر كان بـ {l.priceCur} — لم يُحوَّل تلقائياً</small>}{!stale[i] && p && !l.unitPrice && p.defaultSalePrice && (p.defaultCurrency ?? "IQD") !== cur && <small>سعر المادة الافتراضي {p.defaultSalePrice} {p.defaultCurrency ?? "IQD"} لا يُطبَّق على فاتورة {cur}</small>}</div>
           <div><label>خصم البند</label><input value={l.lineDiscount} onChange={(e) => upd(i, "lineDiscount", e.target.value)} inputMode="decimal" dir="ltr" /></div>
+          <div><label>نوع البند</label><select value={l.profitClass} onChange={(e) => upd(i, "profitClass", e.target.value)} aria-label="نوع البند"><option value="PARTNERSHIP">عادي (ضمن الشراكة)</option><option value="USED">مستعمل (خارج أرباح الشراكة)</option></select></div>
           <div><label>من موقع</label><select value={l.locationId} onChange={(e) => upd(i, "locationId", e.target.value)}><option value="">الرئيسي</option>{locs.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
           {lines.length > 1 && <button type="button" className="danger" onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>حذف</button>}
         </div>); })}
