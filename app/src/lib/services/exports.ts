@@ -10,23 +10,47 @@ import { listPurchases } from "./purchases";
 import { customersSummary, externalProfitReport, balancesReport, productMovement, purchasesReport, reportQuery, salesReport } from "./analytics";
 import { listCapitalReturns } from "./capital-returns";
 
-type Col = { header: string; key: string; width?: number; kind?: "money" | "qty" | "text" };
-const FMT = { money: "#,##0;[Red]-#,##0", qty: "#,##0.######" } as const;
+type Col = { header: string; key: string; width?: number; kind?: "money" | "qty" | "text" | "pct" };
+const FMT = { money: "#,##0;[Red]-#,##0", usd: "#,##0.00;[Red]-#,##0.00", qty: "#,##0.######", pct: "0.00" } as const;
+const MAX_SAFE_DIGITS = 15;                                         // Excel stores doubles: beyond 15 significant digits a number would silently lose precision
 
-function addSheet(wb: ExcelJS.Workbook, title: string, cols: Col[], rows: Record<string, unknown>[], totals?: string[]) {
+/** A money/quantity cell: a real number when Excel can hold it exactly, otherwise the exact decimal text (never a silently rounded Number). */
+export function numericCell(v: unknown, places?: number): number | string {
+  const x = places === undefined ? d(String(v)) : d(String(v)).toDecimalPlaces(places);
+  const digits = x.abs().toFixed().replace(".", "").replace(/^0+/, "").length;
+  return digits <= MAX_SAFE_DIGITS ? x.toNumber() : x.toFixed();
+}
+const placesOf = (cur: unknown) => (cur === "USD" ? 2 : 0);
+
+/**
+ * One sheet. If the rows carry a `currency` column, money is formatted per row (IQD without decimals, USD with two) and the totals are ONE ROW PER CURRENCY:
+ * two currencies are never added together. Totals are exact Decimal sums written as values, so the sheet, the screen and the print agree by construction.
+ */
+export function addSheet(wb: ExcelJS.Workbook, title: string, cols: Col[], rows: Record<string, unknown>[], totals?: string[], boldRows: Record<string, unknown>[] = []) {
   const ws = wb.addWorksheet(title.slice(0, 31), { views: [{ rightToLeft: true, state: "frozen", ySplit: 1 }] });
   ws.columns = cols.map((c) => ({ header: c.header, key: c.key, width: c.width ?? 16 }));
   ws.getRow(1).font = { bold: true }; ws.getRow(1).alignment = { horizontal: "center" };
-  for (const r of rows) {
+  const hasCur = cols.some((c) => c.key === "currency");
+  const put = (r: Record<string, unknown>, bold = false) => {
     const out: Record<string, unknown> = {};
-    for (const c of cols) { const v = r[c.key]; out[c.key] = (c.kind === "money" || c.kind === "qty") && v !== null && v !== undefined && v !== "" ? Number(v) : v ?? ""; }
-    ws.addRow(out);
-  }
-  cols.forEach((c, i) => { if (c.kind && c.kind !== "text") ws.getColumn(i + 1).numFmt = FMT[c.kind]; });
-  if (totals && rows.length) {                                              // totals as live SUM formulas with their cached result, so Excel and the screen always agree
-    const tr: Record<string, unknown> = { [cols[0]!.key]: "الإجمالي" };
-    for (const k of totals) { const idx = cols.findIndex((c) => c.key === k) + 1, letter = ws.getColumn(idx).letter; tr[k] = { formula: `SUM(${letter}2:${letter}${rows.length + 1})`, result: rows.reduce((s, r) => s.plus((r[k] as string) || 0), d(0)).toNumber() }; }
-    const row = ws.addRow(tr); row.font = { bold: true };
+    for (const c of cols) { const v = r[c.key]; out[c.key] = (c.kind === "money" || c.kind === "qty" || c.kind === "pct") && v !== null && v !== undefined && v !== "" ? numericCell(v, c.kind === "money" ? placesOf(hasCur ? r.currency : "IQD") : undefined) : v ?? ""; }
+    const row = ws.addRow(out); if (bold) row.font = { bold: true };
+    cols.forEach((c, i) => { if (c.kind === "money") row.getCell(i + 1).numFmt = hasCur && r.currency === "USD" ? FMT.usd : FMT.money; else if (c.kind && c.kind !== "text") row.getCell(i + 1).numFmt = FMT[c.kind]; });
+  };
+  for (const r of rows) put(r);
+  for (const r of boldRows) put(r, true);
+  if (totals && rows.length) {
+    if (hasCur) {
+      for (const cur of [...new Set(rows.map((r) => String(r.currency ?? "")))].sort()) {
+        const t: Record<string, unknown> = { [cols[0]!.key]: `الإجمالي ${cur}`, currency: cur };
+        for (const k of totals) t[k] = rows.filter((r) => String(r.currency ?? "") === cur).reduce((s, r) => s.plus((r[k] as string) || 0), d(0)).toString();
+        put(t, true);
+      }
+    } else {
+      const t: Record<string, unknown> = { [cols[0]!.key]: "الإجمالي" };
+      for (const k of totals) t[k] = rows.reduce((s, r) => s.plus((r[k] as string) || 0), d(0)).toString();
+      put(t, true);
+    }
   }
   return ws;
 }

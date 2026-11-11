@@ -58,7 +58,7 @@ export async function postTransfer(tx: Tx, who: Principal, actor: Actor, id: str
   const docNo = (await tx`SELECT next_document_number(${who.companyId}, 'stock_transfer', ${yearOf(date)}) AS n`)[0]!.n as string;
   let total = d(0);
   for (const l of lines) {
-    const out = await consumeFifo(tx, who.companyId, { productId: l.product_id, locationId: t.from_location_id, qtyBase: l.qty_base, type: "TRANSFER_OUT", docType: "stock_transfer", docId: id, docLineId: l.id, at: new Date(), onOrBefore: date });
+    const out = await consumeFifo(tx, who.companyId, { productId: l.product_id, locationId: t.from_location_id, qtyBase: l.qty_base, type: "TRANSFER_OUT", docType: "stock_transfer", docId: id, docLineId: l.id, at: new Date(`${date}T12:00:00Z`), onOrBefore: date });
     for (const p of out.parts) {
       await receiveLot(tx, who.companyId, { productId: l.product_id, locationId: t.to_location_id, originDocType: "stock_transfer", originDocId: id, originLineId: l.id,
         receivedAt: p.lot.received_at, qtyBase: p.qty, totalCostBase: p.cost, unitCostOrig: p.lot.unit_cost_orig, currency: p.lot.currency, fx: p.lot.fx_rate_snapshot, sourceLotId: p.lot.id, movement: "TRANSFER_IN" });
@@ -137,7 +137,7 @@ export async function postCount(tx: Tx, who: Principal, actor: Actor, id: string
     const diff = d(l.counted_qty_base).minus(sys);
     let signedCost = d(0);
     if (diff.lt(0)) {
-      const out = await consumeFifo(tx, who.companyId, { productId: l.product_id, locationId: c.location_id, qtyBase: diff.abs(), type: "COUNT_ADJ", docType: "inventory_count", docId: id, docLineId: l.id, at: new Date() });
+      const out = await consumeFifo(tx, who.companyId, { productId: l.product_id, locationId: c.location_id, qtyBase: diff.abs(), type: "COUNT_ADJ", docType: "inventory_count", docId: id, docLineId: l.id, at: new Date(`${date}T12:00:00Z`) });
       signedCost = out.cost.neg(); shortage = shortage.plus(out.cost);
     } else if (diff.gt(0)) {
       if (l.unit_cost_base === null) throw badRequest("SURPLUS_NEEDS_UNIT_COST", "الزيادة في الجرد تتطلب تكلفة وحدة صريحة");

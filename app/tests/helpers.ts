@@ -49,8 +49,9 @@ export async function call(h: Handler, o: { method?: string; path?: string; body
   const method = o.method ?? "GET";
   const req = new NextRequest(ORIGIN + (o.path ?? "/api/x"), { method, headers, body: method === "GET" ? undefined : JSON.stringify(o.body ?? {}) });
   const res = await h(req, { params: Promise.resolve(o.params ?? {}) });
-  const text = await res.text();
-  return { status: res.status, body: text ? JSON.parse(text) : null, headers: res.headers };
+  const buffer = Buffer.from(await res.arrayBuffer()); const text = buffer.toString("utf8");
+  const json = (res.headers.get("content-type") ?? "").includes("json") || /^[{[]/.test(text);
+  return { status: res.status, body: text && json ? JSON.parse(text) : null, buffer, headers: res.headers };
 }
 
 export async function loginAs(loginHandler: Handler, username: string, password: string): Promise<Session> {

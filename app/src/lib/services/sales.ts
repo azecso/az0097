@@ -320,7 +320,7 @@ export async function postDelivery(tx: Tx, who: Principal, actor: Actor, id: str
   for (const l of lines) {
     const done = (await tx`SELECT COALESCE(sum(dl.qty_base), 0)::text AS q, COALESCE(sum(dl.revenue_net_base), 0)::text AS rn, COALESCE(sum(dl.revenue_gross_base), 0)::text AS rg FROM delivery_lines dl JOIN delivery_notes n ON n.id = dl.delivery_id WHERE dl.sales_line_id = ${l.sales_line_id} AND n.status = 'POSTED'`)[0]!;
     if (d(done.q).plus(l.qty_base).gt(l.sold)) throw conflict("DELIVERY_EXCEEDS_INVOICED", "الكمية المسلّمة تتجاوز المفوترة");
-    const out = await consumeFifo(tx, who.companyId, { productId: l.product_id, locationId: l.location_id, qtyBase: l.qty_base, type: "SALE_OUT", docType: "delivery_note", docId: id, docLineId: l.id, at: new Date(), onOrBefore: date });
+    const out = await consumeFifo(tx, who.companyId, { productId: l.product_id, locationId: l.location_id, qtyBase: l.qty_base, type: "SALE_OUT", docType: "delivery_note", docId: id, docLineId: l.id, at: new Date(`${date}T12:00:00Z`), onOrBefore: date });
     let rn = d(0), rg = d(0);
     if (invRow!.revenue_deferred) {                                                  // the delivered share of the invoiced value (the last delivery takes the exact remainder)
       const [sl] = await tx`SELECT net_line_base, line_total_base, qty_base FROM sales_lines WHERE id = ${l.sales_line_id}`;
@@ -416,7 +416,7 @@ export async function postSalesReturn(tx: Tx, who: Principal, actor: Actor, id: 
     const rest = d(sl!.qty_base).minus(prev.q);
     const vO = want.eq(rest) ? d(sl!.net_line_orig).minus(prev.vo) : roundMoney(d(sl!.net_line_orig).mul(want).div(sl!.qty_base), cur);
     const vB = want.eq(rest) ? d(sl!.net_line_base).minus(prev.vb) : roundMoney(d(sl!.net_line_base).mul(want).div(sl!.qty_base), "IQD");
-    const back = await restoreForReturn(tx, who.companyId, { salesLineId: sl!.id, qtyBase: want, returnId: id, at: new Date() });
+    const back = await restoreForReturn(tx, who.companyId, { salesLineId: sl!.id, qtyBase: want, returnId: id, at: new Date(`${date}T12:00:00Z`) });
     await tx`UPDATE sales_return_lines SET value_orig = ${vO.toString()}, value_base = ${vB.toString()}, cost_base = ${back.cost.toString()} WHERE id = ${l.id}`;
     for (const [loc, c] of back.byLocation) { const a = await inventoryAccountOf(tx, loc); invByAcct.set(a, (invByAcct.get(a) ?? d(0)).plus(c)); }
     valO = valO.plus(vO); valB = valB.plus(vB); cost = cost.plus(back.cost);

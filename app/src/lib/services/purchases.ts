@@ -279,7 +279,7 @@ export async function postReturn(tx: Tx, who: Principal, actor: Actor, id: strin
     const want = d(l.qty_base);
     if (d(already).plus(want).gt(pl!.qty_base)) throw conflict("RETURN_EXCEEDS_PURCHASED", `الكمية المرتجعة الكلية تتجاوز المشتراة (${pl!.qty_base})`);
     const fam = await lotFamily(tx, po!.id, pl!.id);
-    const parts = await consumeFromLots(tx, who.companyId, fam, want, { type: "PURCHASE_RETURN_OUT", docType: "purchase_return", docId: id, docLineId: l.id, at: new Date() });
+    const parts = await consumeFromLots(tx, who.companyId, fam, want, { type: "PURCHASE_RETURN_OUT", docType: "purchase_return", docId: id, docLineId: l.id, at: new Date(`${date}T12:00:00Z`) });
     const taken = parts.reduce((s, p) => s.plus(p.qty), d(0)), cost = parts.reduce((s, p) => s.plus(p.cost), d(0));
     const shortage = want.minus(taken);
     let shortageValue = d(0);
