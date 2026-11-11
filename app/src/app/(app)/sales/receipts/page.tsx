@@ -69,7 +69,7 @@ function Inner() {
       <tbody>{list.data.filter((r) => showDel || r.status !== "REVERSED").map((r) => <tr key={r.id}><td><span className="num">{r.docNo ?? r.draftRef}</span></td><td><span className="num">{r.docDate}</span></td><td>{r.customerName}</td><td><span className="num">{money(r.amount)} {r.currency}</span></td><td>{r.cashAccount ?? "رصيد دائن"}</td><td><span className="num">{money(r.fxDiffBase)}</span></td><td><StatusBadge s={r.status} /></td>
         <td><a href={`/print/receipt/${r.id}`} target="_blank" rel="noreferrer"><button>طباعة</button></a>{r.status === "DRAFT" && can(me, "voucher:approve") && <button className="primary" disabled={busy} onClick={() => run(() => api(`/api/customer-receipts/${r.id}/post`, { method: "POST" }), "تم الترحيل")}>ترحيل</button>}
           {r.status === "DRAFT" && <button className="danger" disabled={busy} onClick={() => run(() => api(`/api/customer-receipts/${r.id}`, { method: "DELETE" }), "حُذفت المسودة")}>حذف</button>}
-          {r.status === "POSTED" && !r.autoForInvoice && can(me, "voucher:cancel") && <Link href={`/sales/receipts?edit=${r.id}`}><button type="button">✏️ تعديل</button></Link>}
+          {r.status === "POSTED" && can(me, "voucher:cancel") && <Link href={`/sales/receipts?edit=${r.id}`}><button type="button">✏️ تعديل</button></Link>}
           {r.status === "POSTED" && !r.autoForInvoice && can(me, "voucher:cancel") && <ReverseBox label="حذف" busy={busy} onReverse={(reason) => run(() => api(`/api/customer-receipts/${r.id}/reverse`, { method: "POST", body: { reason } }), "تم العكس")} />}</td></tr>)}
         {list.data.length === 0 && <tr><td colSpan={8}>لا توجد سندات</td></tr>}</tbody></table></div></>);
 }

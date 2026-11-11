@@ -71,7 +71,7 @@ let P; const ERRS = [];
   p.on("dialog", (dlg) => void dlg.accept(dlg.type() === "prompt" ? "إدخال خاطئ" : undefined));
   await p.goto(B + `/sales/${inv5.id}`); await wait("button:has-text('إجراءات إضافية')"); await p.click("button:has-text('إجراءات إضافية')"); await p.click("button:has-text('إلغاء الفاتورة')"); await p.waitForURL(B + "/sales");
   const rl = await (await ctx.request.get(B + "/api/customer-receipts")).json();
-  ok("deleting an invoice that has a receipt deletes the receipt with it (after confirmation)", rl.find((r) => r.id === rc5.id)?.status === "REVERSED" && !(await (await ctx.request.get(B + "/api/sales-invoices")).json()).some((x) => x.id === inv5.id));
+  ok("cancelling an invoice that has real cash keeps the cash as customer credit (receipt stays posted, invoice gone)", rl.find((r) => r.id === rc5.id)?.status === "POSTED" && !(await (await ctx.request.get(B + "/api/sales-invoices")).json()).some((x) => x.id === inv5.id));
   await p.goto(B + "/sales/receipts"); await wait("h1"); ok("deleted receipts are hidden by default and a box shows them", !(await p.textContent("tbody")).includes(rno5) && (await p.locator("label:has-text('إظهار المحذوفة')").count()) === 1);
   // edit and delete a POSTED invoice from its page: same number, no reversal shown
   const inv3 = await post("/api/sales-invoices", { customerId: cust.id, docDate: "2026-11-05", saleType: "CREDIT", currency: "IQD", deliveryMode: "WITH_INVOICE", discount: "0", lines: [{ productId: prod.id, uom: "قطعة", qty: "1", unitPrice: "5000", lineDiscount: "0" }] }); const posted3 = await post(`/api/sales-invoices/${inv3.id}/post`, {});

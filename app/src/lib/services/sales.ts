@@ -230,13 +230,25 @@ export async function postInvoice(tx: Tx, who: Principal, actor: Actor, id: stri
   return { ...h!, deliveryNo };
 }
 
-export const reverseSchema = z.object({ reason: z.string().min(3).max(500), cascade: z.boolean().default(false) });
+/** receiptHandling: REVERSE = the receipts were never really received (phantom) -> reversed with the invoice, cash/receivable undone;
+ *  KEEP_AS_CREDIT = real cash was received -> it STAYS in the box as customer credit (until a separate refund). */
+export const reverseSchema = z.object({ reason: z.string().min(3).max(500), cascade: z.boolean().default(false), receiptHandling: z.enum(["REVERSE", "KEEP_AS_CREDIT"]).optional() });
 
-export async function reverseInvoice(tx: Tx, who: Principal, actor: Actor, id: string, reason: string, cascade = false) {
+export async function reverseInvoice(tx: Tx, who: Principal, actor: Actor, id: string, reason: string, cascade = false, handling?: "REVERSE" | "KEEP_AS_CREDIT") {
   const [inv] = await tx`SELECT * FROM sales_invoices WHERE id = ${id} FOR UPDATE`;
   if (!inv) throw notFound();
   if (inv.status !== "POSTED") throw conflict("NOT_POSTED", "يمكن عكس المستند المرحّل فقط");
   if ((await tx`SELECT 1 FROM sales_returns WHERE invoice_id = ${id} AND status = 'POSTED'`).length) throw conflict("HAS_RETURNS", "يوجد مرتجع مرحّل؛ اعكسه أولاً");
+  if (handling === "KEEP_AS_CREDIT") {                                                // real money was received: it stays in the box, as customer credit
+    for (const r of await tx`SELECT DISTINCT r.id, r.doc_no FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id WHERE a.invoice_id = ${id} AND r.status = 'POSTED'`) {
+      if ((await tx`SELECT count(DISTINCT invoice_id)::int AS n FROM receipt_allocations WHERE receipt_id = ${r.id}`)[0]!.n > 1) throw conflict("MULTI_INVOICE_RECEIPT", `السند ${r.doc_no} مخصَّص لعدة فواتير؛ عدّله أولاً`);
+      await unpostReceipt(tx, actor, r.id as string, `إلغاء الفاتورة — يبقى المبلغ رصيداً دائناً: ${reason}`);
+      await tx`DELETE FROM receipt_allocations WHERE receipt_id = ${r.id} AND invoice_id = ${id}`;
+      await tx`UPDATE customer_receipts SET auto_for_invoice_id = NULL WHERE id = ${r.id}`;
+      await postReceipt(tx, who, actor, r.id as string);
+      await audit(tx, actor, { action: "receipt.kept_as_credit", entityType: "customer_receipt", entityId: r.id as string, reason });
+    }
+  } else if (handling === "REVERSE") cascade = true;
   if (cascade) {                                                                      // delete the invoice together with the receipts that were collected on it
     for (const r of await tx`SELECT DISTINCT r.id, r.doc_no FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id WHERE a.invoice_id = ${id} AND r.status = 'POSTED' AND r.auto_for_invoice_id IS DISTINCT FROM ${id}`) {
       if ((await tx`SELECT count(DISTINCT invoice_id)::int AS n FROM receipt_allocations WHERE receipt_id = ${r.id}`)[0]!.n > 1) throw conflict("MULTI_INVOICE_RECEIPT", `السند ${r.doc_no} مخصَّص لعدة فواتير؛ عدّله أو احذفه أولاً`);
