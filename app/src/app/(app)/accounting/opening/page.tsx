@@ -9,11 +9,11 @@ interface Row { id: string; asOf: string; kind: string; currency: string; amount
 const K: Record<string, string> = { CAPITAL: "رأس المال", CASH: "نقد", INVENTORY_LAYER: "مخزون (طبقة)", CUSTOMER: "عميل", SUPPLIER: "مورد", RETAINED_EARNINGS: "أرباح محتجزة افتتاحية" };
 export default function Opening() {
   const me = useMe(); const { data, reload } = useLoad<{ rows: Row[]; equation: Eq } | null>("/api/opening", null); const { msg, busy, run } = useAction(reload);
-  const cash = useLoad<{ id: string; name: string }[]>("/api/cash-accounts", []).data, contacts = useLoad<{ id: string; name: string; kind: string }[]>("/api/contacts", []).data, prods = useLoad<{ id: string; code: string; name: string }[]>("/api/products", []).data, locs = useLoad<{ id: string; name: string }[]>("/api/locations", []).data;
+  const cash = useLoad<{ id: string; name: string; currency: string }[]>("/api/cash-accounts", []).data, contacts = useLoad<{ id: string; name: string; kind: string }[]>("/api/contacts", []).data, prods = useLoad<{ id: string; code: string; name: string }[]>("/api/products", []).data, locs = useLoad<{ id: string; name: string }[]>("/api/locations", []).data;
   const [kind, setKind] = useState("CASH");
   async function add(e: React.FormEvent<HTMLFormElement>) { e.preventDefault(); const f = new FormData(e.currentTarget);
     const g = (k: string) => String(f.get(k) ?? ""); const base: Record<string, unknown> = { kind, asOf: g("asOf"), amount: g("amount"), note: g("note") || null };
-    if (kind === "CASH") base.cashAccountId = g("cash");
+    if (kind === "CASH") Object.assign(base, { cashAccountId: g("cash"), fxRate: g("crate") || null });
     if (kind === "INVENTORY_LAYER") Object.assign(base, { productId: g("prod"), locationId: g("loc"), qtyBase: g("qty"), receivedAt: g("recv") });
     if (kind === "CUSTOMER" || kind === "SUPPLIER") Object.assign(base, { contactId: g("contact"), currency: g("cur"), fxRate: g("rate") || null });
     await run(() => api("/api/opening", { method: "POST", body: base }), "أُضيف البند"); }
@@ -30,7 +30,8 @@ export default function Opening() {
         <div><label htmlFor="d">بتاريخ</label><input id="d" name="asOf" type="date" defaultValue={today()} /></div>
         <div><label htmlFor="a">{kind === "INVENTORY_LAYER" ? "إجمالي تكلفة الطبقة (IQD)" : "المبلغ"}</label><input id="a" name="amount" required dir="ltr" inputMode="decimal" /></div></div>
       <div className="row">
-        {kind === "CASH" && <div><label htmlFor="c">الحساب</label><select id="c" name="cash">{cash.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>}
+        {kind === "CASH" && <div><label htmlFor="c">الحساب</label><select id="c" name="cash">{cash.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.currency})</option>)}</select></div>}
+        {kind === "CASH" && <div><label htmlFor="cr">سعر الصرف (لصندوق الدولار: دينار لكل 1$)</label><input id="cr" name="crate" dir="ltr" inputMode="decimal" /></div>}
         {kind === "INVENTORY_LAYER" && <><div><label htmlFor="p">المادة</label><select id="p" name="prod">{prods.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}</select></div><div><label htmlFor="l">الموقع</label><select id="l" name="loc">{locs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></div>
           <div><label htmlFor="q">الكمية (أساسية)</label><input id="q" name="qty" dir="ltr" inputMode="decimal" required /></div><div><label htmlFor="rv">تاريخ استلام الطبقة (FIFO)</label><input id="rv" name="recv" type="date" required /></div></>}
         {(kind === "CUSTOMER" || kind === "SUPPLIER") && <><div><label htmlFor="ct">الجهة</label><select id="ct" name="contact">{contacts.filter((c) => kind === "CUSTOMER" ? c.kind !== "SUPPLIER" : c.kind !== "CUSTOMER").map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>

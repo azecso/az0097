@@ -12,7 +12,7 @@ import { currencyCode, dateStr, moneyStr, qtyStr, rateStr, uuid, yearOf } from "
 export const openingSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("CAPITAL"), asOf: dateStr, amount: moneyStr, note: z.string().max(200).nullish() }),
   z.object({ kind: z.literal("RETAINED_EARNINGS"), asOf: dateStr, amount: moneyStr, note: z.string().min(5, "يجب توثيق الأرباح المحتجزة الافتتاحية").max(300) }),
-  z.object({ kind: z.literal("CASH"), asOf: dateStr, cashAccountId: uuid, amount: moneyStr, note: z.string().max(200).nullish() }),
+  z.object({ kind: z.literal("CASH"), asOf: dateStr, cashAccountId: uuid, amount: moneyStr, fxRate: rateStr.nullish(), note: z.string().max(200).nullish() }),   // currency comes from the cash account; amount is in that currency
   z.object({ kind: z.literal("INVENTORY_LAYER"), asOf: dateStr, productId: uuid, locationId: uuid, qtyBase: qtyStr, amount: moneyStr, receivedAt: dateStr, note: z.string().max(200).nullish() }),   // amount = TOTAL layer cost (IQD)
   z.object({ kind: z.enum(["CUSTOMER", "SUPPLIER"]), asOf: dateStr, contactId: uuid, currency: currencyCode, fxRate: rateStr.nullish(), amount: moneyStr, dueDate: dateStr.nullish(), note: z.string().max(200).nullish() }),
 ]);
@@ -26,7 +26,12 @@ export async function addOpening(tx: Tx, who: Principal, actor: Actor, i: z.infe
     if (!c || (i.kind === "CUSTOMER" ? c.kind === "SUPPLIER" : c.kind === "CUSTOMER")) throw badRequest("WRONG_CONTACT_KIND");
     if (i.currency !== "IQD" && !i.fxRate) throw badRequest("FX_RATE_REQUIRED", "أدخل سعر الصرف للرصيد بالدولار");
   }
-  if (i.kind === "CASH") { const [c] = await tx`SELECT 1 FROM cash_accounts WHERE id = ${i.cashAccountId} AND is_active`; if (!c) throw badRequest("BAD_CASH_ACCOUNT"); }
+  if (i.kind === "CASH") {                                      // the cash account decides the currency; a foreign-currency account needs its opening rate
+    const [c] = await tx`SELECT currency FROM cash_accounts WHERE id = ${i.cashAccountId} AND is_active`; if (!c) throw badRequest("BAD_CASH_ACCOUNT");
+    x.currency = c.currency as string;
+    if (x.currency === "IQD") x.fxRate = "1";
+    else { if (!i.fxRate) throw badRequest("FX_RATE_REQUIRED", "أدخل سعر الصرف لرصيد الصندوق بالدولار"); const n = d(i.fxRate); if (n.lt(1) || n.gt(100000)) throw badRequest("RATE_OUT_OF_RANGE"); }
+  }
   const [r] = await tx`INSERT INTO opening_balances(company_id, as_of, kind, cash_account_id, contact_id, product_id, location_id, currency, fx_rate, amount, qty_base, received_at, note, created_by)
     VALUES (${who.companyId}, ${i.asOf}, ${i.kind}, ${x.cashAccountId ?? null}, ${x.contactId ?? null}, ${x.productId ?? null}, ${x.locationId ?? null}, ${x.currency ?? "IQD"}, ${x.fxRate ?? 1}, ${x.amount}, ${x.qtyBase ?? null}, ${x.receivedAt ?? null}, ${x.note ?? null}, ${who.userId}) RETURNING id`;
   await audit(tx, actor, { action: "opening.add", entityType: "opening_balance", entityId: r!.id, after: i });
@@ -47,7 +52,7 @@ export async function openingEquation(tx: Tx) {
   let cash = d(0), inventory = d(0), customers = d(0), suppliers = d(0), capital = d(0), retained = d(0);
   for (const r of rows) {
     const base = toBase(r.amount, r.fx_rate, r.currency);
-    if (r.kind === "CASH") cash = cash.plus(r.currency === "IQD" ? base : toBase(r.amount, r.fx_rate, r.currency));
+    if (r.kind === "CASH") cash = cash.plus(base);
     else if (r.kind === "INVENTORY_LAYER") inventory = inventory.plus(base);
     else if (r.kind === "CUSTOMER") customers = customers.plus(base);
     else if (r.kind === "SUPPLIER") suppliers = suppliers.plus(base);
@@ -74,6 +79,7 @@ export async function postOpening(tx: Tx, who: Principal, actor: Actor) {
     if (date !== asOf) throw badRequest("MIXED_DATES", "كل الأرصدة الافتتاحية يجب أن تحمل نفس التاريخ");
     if (r.kind === "CASH") {
       const [c] = await tx`SELECT ca.id, ca.currency, a.code FROM cash_accounts ca JOIN accounts a ON a.id = ca.account_id WHERE ca.id = ${r.cash_account_id}`;
+      if (c!.currency !== r.currency || (c!.currency !== "IQD" && d(r.fx_rate).lte(1))) throw badRequest("OPENING_CASH_CURRENCY", "رصيد افتتاحي لصندوق بعملة أجنبية بلا سعر صرف صالح؛ احذفه وأعد إدخاله");
       jl.push({ account: c!.code, debit: base, currency: c!.currency, amountOrig: r.amount, fx: r.fx_rate });
       await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id) VALUES (${who.companyId}, ${c!.id}, ${r.amount}, ${base.toString()}, 'opening', ${batch})`;
     } else if (r.kind === "INVENTORY_LAYER") {
