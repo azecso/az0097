@@ -1,3 +1,4 @@
+import { profitStepUpRequired, requireStepUp } from "../stepup";
 import { z } from "zod";
 import type { Tx } from "../db";
 import type { Principal } from "../authz";
@@ -68,18 +69,19 @@ export async function withdrawProfit(tx: Tx, who: Principal, actor: Actor, i: z.
   if (!who.isOwner) throw forbidden("OWNER_ONLY");
   const amount = d(i.amount); if (amount.lte(0)) throw badRequest("INVALID_AMOUNT");
   await tx`SELECT pg_advisory_xact_lock(hashtext(${who.companyId + ":settlement"}))`;
+  if (await profitStepUpRequired(tx)) await requireStepUp(tx, who, i.totp);                       // ONE verification for the whole request (approval + every payout)
   const ov = await profitOverview(tx); const me = ov.people.find((p) => p.kind === i.partnerKind)!;
   if (amount.gt(me.available)) throw conflict("EXCEEDS_PROFIT_SHARE", `المبلغ يتجاوز حصة ${me.name} من صافي الربح المتاح (${me.available})`);
   if (amount.gt(me.remainingApproved)) {                                                       // needs the live profit to be approved first
     const dft = await createSettlementDraft(tx, who, actor, { periodStart: ov.period.from ? ov.period.from : "2000-01-01", periodEnd: ov.period.to, reserved: "0", adjustments: "0", notes: "اعتماد تلقائي عند صرف الأرباح" } as never);
-    await approveSettlement(tx, who, actor, (dft as unknown as { id: string }).id, i.totp ?? null);
+    await approveSettlement(tx, who, actor, (dft as unknown as { id: string }).id, i.totp ?? null, { stepUpDone: true });
   }
   const rows = await tx`SELECT s.id, sh.share_amount - COALESCE((SELECT sum(po.amount) FROM profit_payouts po WHERE po.settlement_id = s.id AND po.partner_id = sh.partner_id AND po.status = 'POSTED'), 0) AS rem
     FROM profit_settlement_shares sh JOIN profit_settlements s ON s.id = sh.settlement_id JOIN partners p ON p.id = sh.partner_id WHERE p.kind = ${i.partnerKind} AND s.status = 'POSTED' ORDER BY s.period_end, s.created_at`;
   let left = amount; const out: { id: string; docNo: string; amount: string }[] = [];
   for (const [n, r] of rows.entries()) {
     if (left.lte(0)) break; const rem = d(r.rem as string); if (rem.lte(0)) continue; const take = left.lt(rem) ? left : rem;
-    const p = await payProfit(tx, who, actor, { settlementId: r.id as string, partnerKind: i.partnerKind, amount: take.toString(), deductAdvances: "0", cashAccountId: i.cashAccountId, docDate: i.docDate, idempotencyKey: `${i.idempotencyKey}:${n}`, totp: i.totp ?? null });
+    const p = await payProfit(tx, who, actor, { settlementId: r.id as string, partnerKind: i.partnerKind, amount: take.toString(), deductAdvances: "0", cashAccountId: i.cashAccountId, docDate: i.docDate, idempotencyKey: `${i.idempotencyKey}:${n}`, totp: i.totp ?? null }, { stepUpDone: true });
     out.push({ id: p.id, docNo: p.docNo, amount: take.toString() }); left = left.minus(take);
   }
   if (left.gt(0)) throw conflict("EXCEEDS_PROFIT_SHARE", "تعذّر صرف كامل المبلغ من الحصة المعتمدة");

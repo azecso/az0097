@@ -98,9 +98,10 @@ export async function listSettlements(tx: Tx) {
 }
 
 /** Owner approval: recomputes from the live books under a lock, freezes the lines (never reusable), books the distribution liability. */
-export async function approveSettlement(tx: Tx, who: Principal, actor: Actor, id: string, totp?: string | null) {
+/** `stepUpDone`: the caller (one request) already verified the TOTP code once; never consume the same code twice inside one request. */
+export async function approveSettlement(tx: Tx, who: Principal, actor: Actor, id: string, totp?: string | null, opts: { stepUpDone?: boolean } = {}) {
   if (!who.isOwner) throw forbidden("OWNER_ONLY");
-  if (await profitStepUpRequired(tx)) await requireStepUp(tx, who, totp);
+  if (!opts.stepUpDone && await profitStepUpRequired(tx)) await requireStepUp(tx, who, totp);
   await tx`SELECT pg_advisory_xact_lock(hashtext(${who.companyId + ":settlement"}))`;
   const [s] = await tx`SELECT * FROM profit_settlements WHERE id = ${id} FOR UPDATE`;
   if (!s) throw notFound();
@@ -146,9 +147,9 @@ export async function partnerAdvanceBalance(tx: Tx, partnerId: string) {
 }
 
 /** Pays part (or all) of a partner's approved share. Never exceeds the share, the cash, or cash minus committed obligations. Replays are refused. */
-export async function payProfit(tx: Tx, who: Principal, actor: Actor, i: z.infer<typeof payoutSchema>) {
+export async function payProfit(tx: Tx, who: Principal, actor: Actor, i: z.infer<typeof payoutSchema>, opts: { stepUpDone?: boolean } = {}) {
   if (!who.isOwner) throw forbidden("OWNER_ONLY");
-  if (await profitStepUpRequired(tx)) await requireStepUp(tx, who, i.totp);
+  if (!opts.stepUpDone && await profitStepUpRequired(tx)) await requireStepUp(tx, who, i.totp);
   const [s] = await tx`SELECT * FROM profit_settlements WHERE id = ${i.settlementId} FOR UPDATE`;
   if (!s || s.status !== "POSTED") throw conflict("SETTLEMENT_NOT_APPROVED");
   const partner = await partnerRow(tx, i.partnerKind);
@@ -161,6 +162,7 @@ export async function payProfit(tx: Tx, who: Principal, actor: Actor, i: z.infer
   const [ca] = await tx`SELECT ca.id, ca.currency, ca.counts_toward_available_cash AS ctr, a.code FROM cash_accounts ca JOIN accounts a ON a.id = ca.account_id WHERE ca.id = ${i.cashAccountId} AND ca.is_active`;
   if (!ca || ca.currency !== "IQD" || !ca.ctr) throw badRequest("BAD_CASH_ACCOUNT", "الدفع من صندوق/حساب دينار ضمن النقد المتاح");
   if (cash.gt(0)) {
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${who.companyId + ":payout-liquidity"}))`;      // simultaneous payouts (even of different settlements) are checked one at a time against the same liquidity
     await assertCashAvailable(tx, i.cashAccountId, cash);
     const liq = await distributableLiquidity(tx);
     if (cash.gt(liq.available)) throw conflict("INSUFFICIENT_LIQUIDITY", `النقد المتاح للتوزيع بعد الالتزامات المقررة ${liq.available} (نقد ${liq.cash} − التزامات ${liq.committed})`);
@@ -210,7 +212,7 @@ export async function partnersOverview(tx: Tx) {
   }
   return { partners: out, liquidity: await liquiditySummary(tx), lossCarriedForward: (await tx`SELECT COALESCE((SELECT loss_carried_out FROM profit_settlements WHERE status = 'POSTED' ORDER BY period_end DESC LIMIT 1), 0)::text AS v`)[0]!.v };
 }
-async function liquiditySummary(tx: Tx) { const l = await distributableLiquidity(tx); return { cash: l.cash.toString(), committed: l.committed.toString(), available: l.available.toString() }; }
+async function liquiditySummary(tx: Tx) { const l = await distributableLiquidity(tx); return { cash: l.cash.toString(), committed: l.committed.toString(), available: l.available.toString(), customerCredits: l.customerCredits, accruedLiabilities: l.accruedLiabilities, suppliersDue: l.suppliersDue, byCurrency: l.byCurrency }; }
 
 export async function partnerStatement(tx: Tx, partnerId: string) {
   const [p] = await tx`SELECT id, name, kind FROM partners WHERE id = ${partnerId}`;
