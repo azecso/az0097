@@ -15,7 +15,7 @@ for SC in e2e/0*.cjs; do
   DATABASE_URL="$ADMIN/$DB" APP_DB_USER=erp_app APP_DB_PASSWORD=e2e-app-pw npx tsx scripts/migrate.ts >/dev/null
   DATABASE_URL="$ADMIN/$DB" COMPANY_NAME="شركة التجربة" OWNER_USERNAME=owner OWNER_PASSWORD='Owner-Smoke-Pass-77' npx tsx scripts/bootstrap.ts >/dev/null
   APPURL="$(echo "$ADMIN" | sed -E 's#//[^@]*@#//erp_app:e2e-app-pw@#')/$DB"
-  DATABASE_URL="$APPURL" COOKIE_SECURE=false REQUIRE_OWNER_2FA=false UPLOAD_DIR="$PWD/e2e/out/uploads" PORT="$PORT" NEXT_TELEMETRY_DISABLED=1 node node_modules/next/dist/bin/next start -p "$PORT" >"e2e/out/$NAME.server.log" 2>&1 &   # run next directly so $! is the real server (an npx wrapper would survive kill)
+  DATABASE_URL="$APPURL" RESET_DATABASE_URL="$ADMIN/$DB" EXPORT_DIR="$PWD/e2e/out/exports" COOKIE_SECURE=false REQUIRE_OWNER_2FA=false UPLOAD_DIR="$PWD/e2e/out/uploads" PORT="$PORT" NEXT_TELEMETRY_DISABLED=1 node node_modules/next/dist/bin/next start -p "$PORT" >"e2e/out/$NAME.server.log" 2>&1 &   # run next directly so $! is the real server (an npx wrapper would survive kill)
   SRV=$!; for i in $(seq 1 40); do curl -fsS "http://localhost:$PORT/api/health" >/dev/null 2>&1 && break; sleep 0.5; done
   echo "=== $NAME ==="; ( cd e2e/out && E2E_BASE="http://localhost:$PORT" node "../$(basename "$SC")" 2>&1 ) | tee "e2e/out/$NAME.log"
   grep -q "^FAIL\|SMOKE ERROR" "e2e/out/$NAME.log" && FAIL=1

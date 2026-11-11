@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "db", "migrations");
 
-export async function migrate(url: string, appRole?: { user: string; password: string }) {
+export async function migrate(url: string, appRole?: { user: string; password: string }, resetRole?: { user: string; password: string }) {
   const sql = postgres(url, { max: 1, onnotice: () => {} });
   try {
     await sql`SELECT pg_advisory_lock(727001)`;
@@ -54,6 +54,18 @@ export async function migrate(url: string, appRole?: { user: string; password: s
       await sql.unsafe(`REVOKE UPDATE ON schema_migrations FROM ${appRole.user}`);
       await sql.unsafe(`GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO ${appRole.user}`);
       await sql.unsafe(`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ${appRole.user}`);
+      // The data-reset function is deliberately NOT callable by the application role (a compromised app must not be able to wipe the ledger).
+      await sql.unsafe(`REVOKE EXECUTE ON FUNCTION reset_company_data(uuid, uuid, jsonb) FROM ${appRole.user}`);
+      if (resetRole) {                                           // optional separate login that can do exactly one thing: call the reset function
+        if (!/^[a-z_][a-z0-9_]*$/.test(resetRole.user) || resetRole.user === appRole.user) throw new Error("invalid reset role name");
+        const rpw = resetRole.password.replace(/'/g, "''");
+        const rex = await sql`SELECT 1 FROM pg_roles WHERE rolname = ${resetRole.user}`;
+        if (rex.length === 0) await sql.unsafe(`CREATE ROLE ${resetRole.user} LOGIN PASSWORD '${rpw}' NOSUPERUSER NOBYPASSRLS`);
+        else await sql.unsafe(`ALTER ROLE ${resetRole.user} PASSWORD '${rpw}'`);
+        await sql.unsafe(`GRANT CONNECT ON DATABASE "${db}" TO ${resetRole.user}`);
+        await sql.unsafe(`GRANT USAGE ON SCHEMA public TO ${resetRole.user}`);
+        await sql.unsafe(`GRANT EXECUTE ON FUNCTION reset_company_data(uuid, uuid, jsonb) TO ${resetRole.user}`);
+      }
     }
   } finally {
     await sql`SELECT pg_advisory_unlock(727001)`.catch(() => {});
@@ -65,6 +77,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is required");
   const user = process.env.APP_DB_USER, password = process.env.APP_DB_PASSWORD;
-  await migrate(url, user && password ? { user, password } : undefined);
+  const ru = process.env.RESET_DB_USER, rp = process.env.RESET_DB_PASSWORD;
+  await migrate(url, user && password ? { user, password } : undefined, user && password && ru && rp ? { user: ru, password: rp } : undefined);
   console.log("migrations complete");
 }

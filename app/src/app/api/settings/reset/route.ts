@@ -1,15 +1,15 @@
 import { z } from "zod";
 import { secured, parse } from "@/lib/http";
 import { requireStepUp } from "@/lib/stepup";
-import { dumpBeforeReset, removeFiles, resetData } from "@/lib/services/reset";
+import { prepareReset, removeFiles, resetData, resetStatus } from "@/lib/services/reset";
 
-// Owner only. GET = full JSON snapshot to download first; POST = the reset itself (phrase + 2FA code).
-export const GET = secured({ ownerOnly: true }, ({ tx }) => dumpBeforeReset(tx));
+// Owner only. GET = status (the copy itself: /api/settings/reset/download?file=…); POST {action:"prepare"} writes + verifies the full copy; POST {action:"reset"} wipes.
+export const GET = secured({ ownerOnly: true }, ({ tx }) => resetStatus(tx));
 export const POST = secured({ ownerOnly: true }, async ({ tx, principal, actor, req }) => {
-  const b = parse(z.object({ phrase: z.string(), code: z.string().optional(), backedUp: z.literal(true) }), await req.json());
+  const b = parse(z.discriminatedUnion("action", [z.object({ action: z.literal("prepare") }), z.object({ action: z.literal("reset"), phrase: z.string(), code: z.string().optional() })]), await req.json());
+  if (b.action === "prepare") return prepareReset(tx, actor);
   await requireStepUp(tx, principal, b.code);
   const { files } = await resetData(tx, actor, b.phrase);
-  // Files are removed after the response is built; a failure to delete a file never undoes the reset.
   queueMicrotask(() => { void removeFiles(actor.companyId, files); });
   return { ok: true, removedFiles: files.length };
 });
