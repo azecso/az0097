@@ -12,7 +12,17 @@ import { assertCashAvailable } from "./cash";
 
 const dateOf = (v: unknown) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v));
 
-/** Customer credit balance (liability 2400) available to apply, in base currency terms of the ledger. */
+/**
+ * Customer credit (liability 2400) in ONE currency: the original-currency amount and the dinar value it is carried at.
+ * Credit never crosses currencies implicitly (policy §4): a USD credit settles USD invoices only.
+ */
+export async function customerCreditIn(tx: Tx, customerId: string, currency: string) {
+  const [r] = await tx`SELECT COALESCE(sum(CASE WHEN jl.credit_base > 0 THEN jl.amount_orig ELSE -jl.amount_orig END), 0)::text AS o,
+      COALESCE(sum(jl.credit_base - jl.debit_base), 0)::text AS b FROM journal_lines jl JOIN accounts a ON a.id = jl.account_id
+    WHERE a.code = '2400' AND jl.contact_id = ${customerId} AND jl.currency = ${currency}`;
+  return { orig: d(r!.o), base: d(r!.b) };
+}
+/** Total across currencies, in dinars (display only). */
 export async function customerCredit(tx: Tx, customerId: string) {
   const [r] = await tx`SELECT COALESCE(sum(jl.credit_base - jl.debit_base), 0)::text AS c FROM journal_lines jl JOIN accounts a ON a.id = jl.account_id WHERE a.code = '2400' AND jl.contact_id = ${customerId}`;
   return d(r!.c);
@@ -123,8 +133,14 @@ export async function postReceipt(tx: Tx, who: Principal, actor: Actor, id: stri
     }
     await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id) VALUES (${who.companyId}, ${ca!.id}, ${r.amount}, ${cashBase.toString()}, 'customer_receipt', ${id})`;
   } else {
-    if (arBase.gt(await customerCredit(tx, r.customer_id))) throw conflict("INSUFFICIENT_CREDIT", "الرصيد الدائن للعميل لا يكفي");
-    jl.push({ account: "2400", debit: arBase, currency: cur, amountOrig: allocated, fx, contactId: r.customer_id }, { account: "1200", credit: arBase, currency: cur, amountOrig: allocated, fx, contactId: r.customer_id });
+    const avail = await customerCreditIn(tx, r.customer_id, cur);
+    if (d(allocated).gt(avail.orig)) throw conflict("INSUFFICIENT_CREDIT", `الرصيد الدائن للعميل بعملة ${cur} لا يكفي (المتاح ${avail.orig})`);
+    // the credit leaves at the dinar value it was carried at (pro rata); the receivable is cleared at the invoice rate; the difference is realised FX
+    const carried = avail.orig.gt(0) ? (d(allocated).eq(avail.orig) ? avail.base : toBase(avail.base.mul(allocated).div(avail.orig), 1, "IQD")) : d(0);
+    fxDiff = arBase.minus(carried);                                                       // + = receivable cleared for more dinars than the credit was carried at (loss)
+    jl.push({ account: "2400", debit: carried, currency: cur, amountOrig: allocated, fx, contactId: r.customer_id }, { account: "1200", credit: arBase, currency: cur, amountOrig: allocated, fx, contactId: r.customer_id });
+    if (fxDiff.gt(0)) jl.push({ account: "7100", debit: fxDiff, memo: "خسارة فرق صرف محققة" });
+    if (fxDiff.lt(0)) jl.push({ account: "7100", credit: fxDiff.abs(), memo: "ربح فرق صرف محقق" });
   }
   const je = await postJournal(tx, actor, { date, sourceDocType: "customer_receipt", sourceDocId: id, memo: r.kind === "CASH" ? `سند قبض ${docNo}` : `تسوية رصيد دائن ${docNo}`, lines: jl });
   const [h] = await tx`UPDATE customer_receipts SET status = 'POSTED', doc_no = ${docNo}, amount_base = ${cashBase.toString()}, fx_diff_base = ${fxDiff.toString()}, posted_by = ${who.userId}, posted_at = now(),
