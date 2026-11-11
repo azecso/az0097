@@ -42,7 +42,7 @@ describe("dashboard shows the real ledger and always balances", () => {
     expect((await w.api(w.owner, dash, { path: "/api/dashboard?from=2026-05-01&to=2026-04-01" } as any)).status).toBe(400);
   });
   it("alerts: overdue receivables and stale drafts; permission-gated; never invents problems", async () => {
-    const P = await w.mkProduct("D3"); await w.buy({ product: P, qty: "5", price: "100" });
+    const P = await w.mkProduct("D3"); await w.buy({ product: P, qty: "5", price: "100", date: "2024-12-01" });
     const inv = await w.sale({ product: P, qty: "5", price: "500", date: "2025-01-01" });                                // due long ago
     expect(inv.status).toBe(200);
     const a = (await w.api(w.owner, alertsR)).body;

@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "db", "migrations");
 
-export async function migrate(url: string, appRole?: { user: string; password: string }, resetRole?: { user: string; password: string }) {
+export async function migrate(url: string, appRole?: { user: string; password: string }, resetRole?: { user: string; password: string }, stopAfter?: string) {
   const sql = postgres(url, { max: 1, onnotice: () => {} });
   try {
     await sql`SELECT pg_advisory_lock(727001)`;
@@ -27,8 +27,9 @@ export async function migrate(url: string, appRole?: { user: string; password: s
         await tx`INSERT INTO schema_migrations(name, checksum) VALUES (${file}, ${sum})`;
       });
       console.log(`applied ${file}`);
+      if (stopAfter && file === stopAfter) break;                           // test hook: build an "old" database, then upgrade it
     }
-    if (appRole) {
+    if (appRole && !stopAfter) {
       if (!/^[a-z_][a-z0-9_]*$/.test(appRole.user)) throw new Error("invalid app role name");
       const exists = await sql`SELECT 1 FROM pg_roles WHERE rolname = ${appRole.user}`;
       const pw = appRole.password.replace(/'/g, "''");

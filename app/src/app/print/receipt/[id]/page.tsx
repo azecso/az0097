@@ -25,6 +25,7 @@ export default function PrintReceipt() {
       <div><div className="words"><small>المبلغ كتابةً</small>{words}</div>{d.notes && <div className="notes"><b>ملاحظات:</b> {d.notes}</div>}</div>
       <table className="sum"><tbody>
         <tr className="net"><td>{"المبلغ المستلم"} ({d.currency})</td><td><M v={d.total} /></td></tr>
+        {typeof window !== "undefined" && new URLSearchParams(window.location.search).get("internal") === "1" && Number(d.external ?? 0) > 0 && <><tr><td>منه: مقبوض نقداً (يدخل الصندوق)</td><td><M v={d.cashAmount ?? "0"} /></td></tr><tr><td>منه: تسوية غير نقدية — ربح موزَّع خارج النظام</td><td><M v={d.external ?? "0"} /></td></tr></>}
         {d.allocations.length > 0 && <tr><td>المخصَّص للفواتير</td><td><M v={allocated.toString()} /></td></tr>}
         {d.allocations.length > 0 && <tr className="due"><td>المتبقي على الفواتير بعد هذا السند</td><td><M v={stillOwed.toString()} /></td></tr>}
         {!credit && rest.gt(0) && <tr className="due"><td>رصيد دائن غير مخصَّص</td><td><M v={rest.toString()} /></td></tr>}
