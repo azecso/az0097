@@ -159,6 +159,46 @@ function statement(side: "customer" | "supplier"): Def {
     } };
 }
 
+// ------------------------------------------------------------------ customer invoices in detail: every invoice, what was paid and every movement on it
+const customerInvoices: Def = { id: "customer-invoices", title: "فواتير العملاء التفصيلية — المسدَّد والمتبقي وكل حركة", basis: "period", filters: ["from", "to", "partyId", "currency"],
+  definition: "لكل عميل: كل فاتورة بيع فعّالة (الملغاة والمستبدلة لا تظهر) بتاريخها وإجماليها والمسدَّد منها والمرتجع والمتبقي، وتحت كل فاتورة كل حركة جرت عليها بتاريخها: سندات القبض (نقدي/تسوية رصيد دائن/مستلم خارج الصندوق) والمرتجعات، مع الرصيد المتبقي بعد كل حركة. السندات الملغاة تُعرض بوضوح ولا تدخل في المسدَّد. «من/إلى»: تاريخ الفاتورة (أولاً) والمسدَّد يُحسب حتى تاريخ «إلى». لكل عملة إجمالي مستقل ولا يُجمع الدولار مع الدينار. المصدر: الفواتير وسندات القبض والمرتجعات نفسها، ويطابق كشف الحساب.",
+  async run(tx, f) {
+    const to = f.to ?? today(), from = f.from ?? null, party = f.partyId ?? null, cur = f.currency ?? null;
+    const invs = await tx`SELECT si.id, si.doc_no, si.doc_date::text AS dt, si.currency, si.net::text AS net, c.name AS customer, c.id AS cid, si.sale_type FROM sales_invoices si JOIN contacts c ON c.id = si.customer_id
+      WHERE si.status = 'POSTED' AND si.doc_date <= ${to} AND (${from}::date IS NULL OR si.doc_date >= ${from}::date) AND (${party}::uuid IS NULL OR si.customer_id = ${party}::uuid) AND (${cur}::text IS NULL OR si.currency = ${cur}::text)
+      ORDER BY c.name, c.id, si.doc_date, si.doc_no`;
+    const ids = invs.map((i) => i.id as string);
+    const rcs = ids.length ? await tx`SELECT a.invoice_id, r.id, r.doc_no, r.doc_date::text AS dt, r.status, r.kind, r.created_at, ca.name AS acct, a.external, a.external_kind, a.amount::text AS amount, r.auto_for_invoice_id IS NOT NULL AS auto
+      FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id LEFT JOIN cash_accounts ca ON ca.id = r.cash_account_id
+      WHERE a.invoice_id = ANY(${ids}::uuid[]) AND r.status IN ('POSTED','REVERSED') AND r.doc_date <= ${to} ORDER BY r.doc_date, r.created_at` : [];
+    const rets = ids.length ? await tx`SELECT sr.invoice_id, sr.id, sr.doc_no, sr.doc_date::text AS dt, sr.status, sr.created_at, sr.value_orig::text AS value, sr.applied_orig::text AS applied, sr.credit_orig::text AS credit, sr.refund_orig::text AS refund
+      FROM sales_returns sr WHERE sr.invoice_id = ANY(${ids}::uuid[]) AND sr.status IN ('POSTED','REVERSED') AND sr.doc_date <= ${to} ORDER BY sr.doc_date, sr.created_at` : [];
+    const rows: Row[] = [];
+    for (const i of invs) {
+      type Mv = { dt: string; at: number; kind: string; no: string; link: string | null; note: string; amount: string; effect: ReturnType<typeof d>; paid: ReturnType<typeof d>; ret: ReturnType<typeof d>; void: boolean };
+      const mv: Mv[] = [];
+      for (const a of rcs.filter((x) => x.invoice_id === i.id)) {
+        const live = a.status === "POSTED", amt = d(a.amount as string);
+        const kind = a.kind === "CREDIT_APPLICATION" ? "تسوية من رصيد دائن" : a.external ? (a.external_kind === "OUTSIDE_MARGIN" ? "مستلم خارج الصندوق (ربح خارج التوزيع)" : "تسوية غير نقدية (ربح موزَّع خارج النظام)") : a.auto ? "قبض نقدي (بيع نقدي)" : "قبض نقدي";
+        mv.push({ dt: a.dt as string, at: new Date(a.created_at as string).getTime(), kind: live ? kind : `${kind} — ملغى`, no: a.doc_no as string, link: `/print/receipt/${a.id}`, note: (a.acct as string | null) ?? "", amount: amt.toString(), effect: live ? amt : d(0), paid: live ? amt : d(0), ret: d(0), void: !live });
+      }
+      for (const r of rets.filter((x) => x.invoice_id === i.id)) {
+        const live = r.status === "POSTED", ap = d(r.applied as string);
+        const parts = [d(r.credit as string).gt(0) ? `رصيد دائن ${d(r.credit as string)}` : "", d(r.refund as string).gt(0) ? `مُسترد نقداً ${d(r.refund as string)}` : ""].filter(Boolean).join(" · ");
+        mv.push({ dt: r.dt as string, at: new Date(r.created_at as string).getTime(), kind: live ? "مرتجع" : "مرتجع — ملغى", no: r.doc_no as string, link: `/sales/${i.id}`, note: parts, amount: d(r.value as string).toString(), effect: live ? ap : d(0), paid: d(0), ret: live ? ap : d(0), void: !live });
+      }
+      mv.sort((a, b) => (a.dt < b.dt ? -1 : a.dt > b.dt ? 1 : a.at - b.at));
+      const net = d(i.net as string), paid = mv.reduce((t, m) => t.plus(m.paid), d(0)), ret = mv.reduce((t, m) => t.plus(m.ret), d(0));
+      const base = { customer: i.customer as string, invoiceNo: i.doc_no as string, invoiceLink: `/sales/${i.id}`, currency: i.currency as string };
+      rows.push({ ...base, invoiceDate: i.dt as string, type: i.sale_type === "CASH" ? "فاتورة بيع نقدي" : "فاتورة بيع آجل", docNo: i.doc_no as string, docLink: `/sales/${i.id}`, docDate: i.dt as string, note: "", amount: null, invoiceTotal: net.toString(), paid: paid.toString(), returns: ret.toString(), remaining: net.minus(paid).minus(ret).toString(), balance: net.toString() });
+      let run = net;
+      for (const m of mv) { run = run.minus(m.effect); rows.push({ ...base, invoiceDate: null, type: m.kind, docNo: m.no, docLink: m.link, docDate: m.dt, note: m.note, amount: m.amount, invoiceTotal: null, paid: null, returns: null, remaining: null, balance: m.void ? null : run.toString() }); }
+    }
+    const cols: Col[] = [{ key: "customer", label: "العميل" }, { key: "invoiceNo", label: "الفاتورة", href: "invoiceLink" }, { key: "invoiceDate", label: "تاريخ الفاتورة" }, { key: "type", label: "الحركة" }, { key: "docNo", label: "رقم المستند", href: "docLink" }, { key: "docDate", label: "تاريخ الحركة" }, { key: "note", label: "الصندوق / ملاحظة" },
+      { key: "amount", label: "مبلغ الحركة", kind: "money" }, { key: "invoiceTotal", label: "إجمالي الفاتورة", kind: "money" }, { key: "paid", label: "المسدَّد", kind: "money" }, { key: "returns", label: "المرتجع", kind: "money" }, { key: "remaining", label: "المتبقي", kind: "money" }, { key: "balance", label: "المتبقي بعد الحركة", kind: "money" }];
+    return { columns: cols, rows, totals: totalsBy(rows, ["invoiceTotal", "paid", "returns", "remaining"]), notes: ["سطر الفاتورة هو الأول، وتحته حركاتها بالتاريخ؛ الإجمالي يجمع سطور الفواتير فقط فلا يتكرر شيء", "الدولار والدينار لا يُجمعان: إجمالي مستقل لكل عملة"] };
+  } };
+
 // ------------------------------------------------------------------ inventory movement
 const inventory: Def = { id: "inventory-movement", title: "حركة المخزون", basis: "period", filters: ["from", "to", "productId", "locationId"],
   definition: "لكل مادة وموقع: الرصيد الافتتاحي قبل «من»، الوارد (شراء/افتتاحي)، الصادر (بيع)، مرتجع المبيعات، مرتجع المشتريات، التحويلات، الجرد، والختامي — بالكمية (بوحدة المادة الأساسية) والقيمة بالدينار. لا تُجمع الكميات عبر وحدات مختلفة. المصدر: حركات المخزون المؤرخة بتاريخ المستند.",
@@ -294,5 +334,5 @@ const outsideSales: Def = { id: "outside-sales", title: "مبيعات «الرب
       rows: out, totals, notes: ["الربح تجاري ومستبعد من توزيع الشراكة ولا ينشئ حصة لأحد", "المبالغ بعملة الفاتورة؛ الكلفة والربح بالدينار", "ما دخل الصندوق وما استُلم خارجه وما بقي ذمة ثلاثة أرقام مستقلة"] };
   } };
 
-export const REPORTS: Def[] = [outsideBatches, outsideSales, profits, trial, ledger, pnl, bs, statement("customer"), statement("supplier"), inventory, cashMv];
+export const REPORTS: Def[] = [customerInvoices, outsideBatches, outsideSales, profits, trial, ledger, pnl, bs, statement("customer"), statement("supplier"), inventory, cashMv];
 export const reportById = (id: string) => REPORTS.find((r) => r.id === id);

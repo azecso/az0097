@@ -13,7 +13,7 @@ function Inner() {
   const res = useLoad<RResult | null>(`/api/reports2/${id}${qs ? `?${qs}` : ""}`, null); const r = res.data;
   const contacts = useRefList<Opt>("contacts", "/api/contacts").data, prods = useRefList<Opt>("products", "/api/products").data;
   const set = (k: string, v: string) => { const p = new URLSearchParams(sp); if (v) p.set(k, v); else p.delete(k); router.replace(`/reports/${id}?${p}`); };
-  const parties = useMemo(() => contacts.filter((c) => (id === "customers" ? c.kind !== "SUPPLIER" : id === "suppliers" ? c.kind !== "CUSTOMER" : true)), [contacts, id]);
+  const parties = useMemo(() => contacts.filter((c) => (id === "customers" || id === "customer-invoices" ? c.kind !== "SUPPLIER" : id === "suppliers" ? c.kind !== "CUSTOMER" : true)), [contacts, id]);
   return (<>
     <h1>{r?.title ?? "تقرير"}</h1>
     {r && <p><small><b>التعريف:</b> {r.definition}</small></p>}

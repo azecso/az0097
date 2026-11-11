@@ -8,7 +8,7 @@ import { GROUP_LABEL, TYPE_TITLE, apiOf, colsOf, exportOf, type RType } from "@/
 
 interface Opt { id: string; name: string; code?: string; kind?: string }
 const TYPES = (Object.keys(TYPE_TITLE) as RType[]).filter((t) => t !== "customers");            // customer summary moved to the per-currency statement report
-const FIN: [string, string][] = [["trial-balance", "ميزان المراجعة"], ["ledger?account=1110", "الأستاذ العام"], ["profit-loss", "الأرباح والخسائر"], ["balance-sheet", "المركز المالي"], ["customers", "كشف حسابات العملاء"], ["suppliers", "كشف حسابات الموردين"], ["inventory-movement", "حركة المخزون"], ["cash-movement", "حركة النقد والعهدة"], ["profit-statement", "كشف الأرباح والشركاء"], ["outside-batches", "دفعات الربح خارج التوزيع"], ["outside-sales", "مبيعات الربح خارج التوزيع"]];
+const FIN: [string, string][] = [["trial-balance", "ميزان المراجعة"], ["ledger?account=1110", "الأستاذ العام"], ["profit-loss", "الأرباح والخسائر"], ["balance-sheet", "المركز المالي"], ["customer-invoices", "فواتير العملاء التفصيلية (المسدَّد والمتبقي وكل حركة)"], ["customers", "كشف حسابات العملاء"], ["suppliers", "كشف حسابات الموردين"], ["inventory-movement", "حركة المخزون"], ["cash-movement", "حركة النقد والعهدة"], ["profit-statement", "كشف الأرباح والشركاء"], ["outside-batches", "دفعات الربح خارج التوزيع"], ["outside-sales", "مبيعات الربح خارج التوزيع"]];
 const STATUS_AR: Record<string, string> = { PAID: "مسدّد بالكامل", PARTIAL: "مسدّد جزئياً", UNPAID: "غير مسدّد" };
 const cell = (v: unknown, kind?: string) => (typeof v === "string" && STATUS_AR[v] ? STATUS_AR[v] : v === null || v === undefined || v === "" ? "—" : kind === "money" ? money(v as string) : kind === "qty" ? Number(v).toLocaleString("en-US", { maximumFractionDigits: 4 }) : String(v));
 
