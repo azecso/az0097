@@ -7,7 +7,8 @@ import { MsgBox, useLoad } from "@/components/ui";
 import { GROUP_LABEL, TYPE_TITLE, apiOf, colsOf, exportOf, type RType } from "@/lib/report-config";
 
 interface Opt { id: string; name: string; code?: string; kind?: string }
-const TYPES = Object.keys(TYPE_TITLE) as RType[];
+const TYPES = (Object.keys(TYPE_TITLE) as RType[]).filter((t) => t !== "customers");            // customer summary moved to the per-currency statement report
+const FIN: [string, string][] = [["trial-balance", "ميزان المراجعة"], ["ledger?account=1110", "الأستاذ العام"], ["profit-loss", "الأرباح والخسائر"], ["balance-sheet", "المركز المالي"], ["customers", "كشف حسابات العملاء"], ["suppliers", "كشف حسابات الموردين"], ["inventory-movement", "حركة المخزون"], ["cash-movement", "حركة النقد والعهدة"]];
 const STATUS_AR: Record<string, string> = { PAID: "مسدّد بالكامل", PARTIAL: "مسدّد جزئياً", UNPAID: "غير مسدّد" };
 const cell = (v: unknown, kind?: string) => (typeof v === "string" && STATUS_AR[v] ? STATUS_AR[v] : v === null || v === undefined || v === "" ? "—" : kind === "money" ? money(v as string) : kind === "qty" ? Number(v).toLocaleString("en-US", { maximumFractionDigits: 4 }) : String(v));
 
@@ -32,6 +33,7 @@ function Inner() {
   const printQs = new URLSearchParams(qs); printQs.set("type", type); if (type === "debtors" || type === "creditors") printQs.delete("side");
   return (<>
     <h1>التقارير</h1>
+    <div className="card row" aria-label="التقارير المالية"><strong>مالية ومحاسبية:</strong>{FIN.map(([id, t]) => <a key={id} className="btn" href={`/reports/${id}`}>{t}</a>)}<a className="btn" href="/capital/returns">إرجاع رأس المال (معلوماتي)</a></div>
     <div className="card row" role="tablist">{TYPES.map((t) => <button key={t} role="tab" aria-selected={t === type} className={t === type ? "primary" : ""} onClick={() => { setType(t); setParty(""); }}>{TYPE_TITLE[t]}</button>)}</div>
     <div className="card row" style={{ marginTop: 12 }}>
       {(type === "sales" || type === "purchases") && <div><label htmlFor="g">طريقة العرض</label><select id="g" value={group} onChange={(e) => setGroup(e.target.value)}>{Object.entries(GROUP_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>}

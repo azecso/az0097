@@ -87,9 +87,28 @@ describe("reference dataset: every report matches the hand-computed figures", ()
   it("Excel = screen: totals per currency (never 64,100) and USD keeps two decimals", async () => {
     const res: any = await w.api(w.owner, w.R.exportReport, { params: { id: "customers" }, path: "/api/export-report/customers?to=2026-03-31" } as any);
     const buf: Buffer = res.buffer; expect(res.status).toBe(200);
-    const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf); const ws = wb.worksheets[0]!;
+    const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf as any); const ws = wb.worksheets[0]!;
     const rows: any[][] = []; ws.eachRow((row) => rows.push(row.values as any[]));
     const flat = rows.map((r) => r.join("|")); expect(flat.some((x) => x.includes("الإجمالي IQD") && x.includes("64000"))).toBe(true); expect(flat.some((x) => x.includes("الإجمالي USD") && x.includes("100"))).toBe(true);
     expect(flat.some((x) => x.includes("64100"))).toBe(false);
+  });
+  it("sales report: gross before discount, discount, returns, recognised revenue, cost, profit and margin; distinct invoice count under any grouping", async () => {
+    const q = (g: string) => w.api(w.owner, (w.R as any).salesReport, { path: `/api/reports/sales?group=${g}&from=2026-02-01&to=2026-03-31` } as any);
+    for (const g of ["invoice", "party", "product", "month"]) {
+      const r = (await q(g)).body; expect(r.totals.docs, g).toBe(2);
+      expect(N(r.totals)).toMatchObject({ gross: 215000, discount: 1000, returns: 3938, net: 210062, recognized: 210062, cost: 96800, profit: 113262 }); expect(Number(r.totals.margin)).toBeCloseTo(53.92, 2);
+    }
+    const byProduct = (await q("product")).body; expect(byProduct.rows.reduce((a: number, x: any) => a + x.docs, 0)).toBe(3);           // invoice 1 holds two products: per-row counts add up to 3, the TOTAL stays 2
+  });
+  it("an undelivered invoice adds to invoiced value but NOT to recognised revenue, cost or profit (no inflated profit)", async () => {
+    await w.sale({ product: B, qty: "5", price: "9000", date: "2026-03-20", mode: "SEPARATE", customer: c1 });
+    const r = (await w.api(w.owner, (w.R as any).salesReport, { path: "/api/reports/sales?group=invoice&from=2026-02-01&to=2026-03-31" } as any)).body;
+    expect(N(r.totals)).toMatchObject({ gross: 260000, net: 255062, recognized: 210062, cost: 96800, profit: 113262 }); expect(r.totals.docs).toBe(3);
+  });
+  it("profit statement keeps accounting profit, eligible profit and payable liquidity apart", async () => {
+    const r = await rep("profit-statement"); const get = (l: string) => Number(r.rows.find((x: any) => x.label === l)?.amount);
+    expect(get("صافي نتيجة النشاط (بعد المصاريف)")).toBe(85262);
+    expect(get("ربح مؤهل جديد (فواتير مسدَّدة ومسلَّمة بالكامل)")).toBeGreaterThan(0); expect(get("ربح غير مؤهل بعد (لم تُسدَّد أو تُسلَّم بالكامل)")).toBeGreaterThanOrEqual(0);
+    expect(r.rows.some((x: any) => /— معتمد$/.test(x.label))).toBe(true); expect(r.notes.join(" ")).toContain("ثلاثة مقاييس");
   });
 });

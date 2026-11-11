@@ -2,6 +2,7 @@ import type { Tx } from "../db";
 import { badRequest } from "../errors";
 import { d } from "../money";
 import { trialBalance } from "./reports";
+import { computeSettlement, partnersOverview } from "./settlements";
 
 /**
  * Report registry. Every report is defined ONCE here (title, definition, basis, filters, columns, rows, totals) and the screen, the A4 print/PDF and the Excel export all render this same result,
@@ -203,5 +204,26 @@ const cashMv: Def = { id: "cash-movement", title: "حركة النقد والع�
     return { columns: [{ key: "account", label: "الحساب" }, { key: "currency", label: "العملة" }, { key: "type", label: "الحركة" }, { key: "inflow", label: "داخل", kind: "money" }, { key: "outflow", label: "خارج", kind: "money" }, { key: "balance", label: "الرصيد", kind: "money" }], rows, totals: [], notes: ["كل صندوق بعملته؛ لا جمع بين العملات", "التحويل بين الصندوق والعهدة حركة داخلية وليست قبضاً ثانياً"] };
   } };
 
-export const REPORTS: Def[] = [trial, ledger, pnl, bs, statement("customer"), statement("supplier"), inventory, cashMv];
+
+// ------------------------------------------------------------------ profits: accounting vs eligible vs payable, per partner
+const profits: Def = { id: "profit-statement", title: "كشف الأرباح والشركاء", basis: "snapshot", filters: ["from", "to"],
+  definition: "ثلاثة مقاييس منفصلة بالدينار: (1) الربح المحاسبي للفترة من الأستاذ؛ (2) الربح المؤهل للتوزيع (فواتير مسدَّدة ومسلَّمة بالكامل فقط) بعد المصاريف والخسائر المرحَّلة والحجز؛ (3) السيولة القابلة للدفع. ثم لكل طرف: المعتمد والمدفوع والمتبقي. المصدر: الأستاذ + التسويات المعتمدة، ويعرض الوضع الحالي (حتى اليوم).",
+  async run(tx, f) {
+    const p = await pnl.run(tx, { from: f.from, to: f.to }); const pick = (l: string) => p.rows.find((x) => x.label === l)?.amount ?? "0";
+    const [last] = await tx`SELECT period_end::text AS pe FROM profit_settlements WHERE status = 'POSTED' ORDER BY period_end DESC LIMIT 1`;
+    const start = last ? new Date(Date.parse(last.pe as string) + 86400000).toISOString().slice(0, 10) : "2000-01-01";
+    const live = await computeSettlement(tx, { periodStart: start, periodEnd: today(), reserved: "0", releaseReserve: "0", adjustments: "0" });
+    const ov = await partnersOverview(tx);
+    const paidBy = new Map((await tx`SELECT p.id, COALESCE(sum(po.amount) FILTER (WHERE po.status = 'POSTED'), 0)::text AS paid, COALESCE((SELECT sum(sh.share_amount) FROM profit_settlement_shares sh JOIN profit_settlements s ON s.id = sh.settlement_id WHERE sh.partner_id = p.id AND s.status = 'POSTED'), 0)::text AS approved FROM partners p LEFT JOIN profit_payouts po ON po.partner_id = p.id GROUP BY p.id`).map((r) => [r.id as string, r]));
+    const rows: Row[] = []; const add = (label: string, v: string | null, grp = false) => rows.push({ label, amount: v, currency: "IQD", bold: grp ? "1" : null });
+    add("1) الربح المحاسبي (الفترة المحددة)", null, true); add("الربح التجاري (إيراد معترف به − تكلفة المسلَّم − مرتجعات)", pick("= الربح التجاري (الإجمالي)")); add("± فروق الصرف المحققة", pick("± فروق الصرف المحققة (ربح +/خسارة −)")); add("صافي نتيجة النشاط (بعد المصاريف)", pick("= صافي نتيجة النشاط"));
+    add("2) الربح المؤهل للتوزيع (حتى اليوم، منذ آخر تسوية معتمدة)", null, true); add("ربح مؤهل جديد (فواتير مسدَّدة ومسلَّمة بالكامل)", live.eligibleProfit); add("ربح غير مؤهل بعد (لم تُسدَّد أو تُسلَّم بالكامل)", live.pendingProfit);
+    add("− مصاريف وبنود مستحقة منذ آخر تسوية", live.deductions); add("خسارة مرحَّلة سابقة", live.lossCarriedIn); add("رصيد الحجز", live.reserveBefore); add("= القابل للتوزيع الآن (قبل أي حجز جديد)", live.distributable, true);
+    add("3) السيولة القابلة للدفع (دينار)", ov.liquidity.available, true);
+    add("4) الشركاء", null, true);
+    for (const x of ov.partners as unknown as { id: string; name: string }[]) { const pb = paidBy.get(x.id as string); add(`${x.name} — معتمد`, pb ? (pb.approved as string) : "0"); add(`${x.name} — مدفوع`, pb ? (pb.paid as string) : "0"); add(`${x.name} — متبقٍّ`, d(pb?.approved as string ?? 0).minus(pb?.paid as string ?? 0).toString()); }
+    return { columns: [{ key: "label", label: "البند" }, { key: "amount", label: "المبلغ (IQD)", kind: "money" }], rows, totals: [], notes: ["كل المبالغ بالدينار العراقي؛ الصرف بالدينار فقط", "الربح المحاسبي ≠ الربح المؤهل ≠ السيولة: ثلاثة مقاييس مستقلة"] };
+  } };
+
+export const REPORTS: Def[] = [profits, trial, ledger, pnl, bs, statement("customer"), statement("supplier"), inventory, cashMv];
 export const reportById = (id: string) => REPORTS.find((r) => r.id === id);

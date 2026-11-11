@@ -18,32 +18,38 @@ const dec = (rows: Record<string, unknown>[], keys: string[]) => {
 };
 
 export async function salesReport(tx: Tx, q: ReportQuery) {
+  const flt = tx`WHERE si.status = 'POSTED' AND NOT si.is_opening
+        AND (${q.from ?? null}::date IS NULL OR si.doc_date >= ${q.from ?? null}::date) AND (${q.to ?? null}::date IS NULL OR si.doc_date <= ${q.to ?? null}::date)
+        AND (${q.partyId ?? null}::uuid IS NULL OR si.customer_id = ${q.partyId ?? null}::uuid) AND (${q.productId ?? null}::uuid IS NULL OR sl.product_id = ${q.productId ?? null}::uuid)`;
+  // Basis: invoices dated in the period, in their CURRENT state (deliveries/returns to date). Revenue = the DELIVERED share only; cost = FIFO cost of what was delivered — an undelivered invoice cannot inflate profit.
   const rows = await tx`
     WITH l AS (
       SELECT si.id AS inv_id, si.doc_no, si.doc_date, c.id AS party_id, c.name AS party, sl.product_id, p.code AS pcode, p.name AS pname,
-        sl.qty_base, sl.net_line_base AS net,
+        sl.qty_base, sl.line_total_base AS gross, sl.line_total_base - sl.net_line_base AS disc, sl.net_line_base AS net,
+        COALESCE((SELECT sum(dl.qty_base) FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id WHERE dl.sales_line_id = sl.id AND dn.status = 'POSTED'), 0) AS dq,
         COALESCE((SELECT sum(dl.cost_base) FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id WHERE dl.sales_line_id = sl.id AND dn.status = 'POSTED'), 0) AS cogs,
         COALESCE((SELECT sum(rl.value_base) FROM sales_return_lines rl JOIN sales_returns r ON r.id = rl.return_id WHERE rl.sales_line_id = sl.id AND r.status = 'POSTED'), 0) AS ret,
         COALESCE((SELECT sum(rl.cost_base) FROM sales_return_lines rl JOIN sales_returns r ON r.id = rl.return_id WHERE rl.sales_line_id = sl.id AND r.status = 'POSTED'), 0) AS ret_cost,
         COALESCE((SELECT sum(rl.qty_base) FROM sales_return_lines rl JOIN sales_returns r ON r.id = rl.return_id WHERE rl.sales_line_id = sl.id AND r.status = 'POSTED'), 0) AS ret_qty
-      FROM sales_invoices si JOIN sales_lines sl ON sl.invoice_id = si.id JOIN contacts c ON c.id = si.customer_id JOIN products p ON p.id = sl.product_id
-      WHERE si.status = 'POSTED' AND NOT si.is_opening
-        AND (${q.from ?? null}::date IS NULL OR si.doc_date >= ${q.from ?? null}::date) AND (${q.to ?? null}::date IS NULL OR si.doc_date <= ${q.to ?? null}::date)
-        AND (${q.partyId ?? null}::uuid IS NULL OR si.customer_id = ${q.partyId ?? null}::uuid) AND (${q.productId ?? null}::uuid IS NULL OR sl.product_id = ${q.productId ?? null}::uuid))
+      FROM sales_invoices si JOIN sales_lines sl ON sl.invoice_id = si.id JOIN contacts c ON c.id = si.customer_id JOIN products p ON p.id = sl.product_id ${flt}),
+    r AS (SELECT *, CASE WHEN dq >= qty_base THEN net ELSE round(net * dq / qty_base) END AS rec FROM l)
     SELECT CASE ${q.group} WHEN 'party' THEN party_id::text WHEN 'product' THEN product_id::text WHEN 'month' THEN to_char(doc_date, 'YYYY-MM') ELSE inv_id::text END AS key,
            CASE ${q.group} WHEN 'party' THEN min(party) WHEN 'product' THEN min(pcode) || ' — ' || min(pname) WHEN 'month' THEN to_char(min(doc_date), 'YYYY-MM') ELSE min(doc_no) END AS label,
            CASE WHEN ${q.group} = 'invoice' THEN min(doc_date)::text END AS date, CASE WHEN ${q.group} = 'invoice' THEN min(party) END AS party,
-           count(DISTINCT inv_id)::int AS docs, sum(qty_base - ret_qty)::text AS qty, sum(net)::text AS gross, sum(ret)::text AS returns, sum(net - ret)::text AS net,
-           sum(cogs - ret_cost)::text AS cost, sum((net - ret) - (cogs - ret_cost))::text AS profit
-    FROM l GROUP BY 1
+           count(DISTINCT inv_id)::int AS docs, sum(qty_base - ret_qty)::text AS qty, sum(gross)::text AS gross, sum(disc)::text AS discount, sum(ret)::text AS returns, sum(net - ret)::text AS net,
+           sum(rec - ret)::text AS recognized, sum(cogs - ret_cost)::text AS cost, sum((rec - ret) - (cogs - ret_cost))::text AS profit
+    FROM r GROUP BY 1
     ORDER BY CASE WHEN ${q.group} = 'invoice' THEN min(doc_date)::text ELSE NULL END DESC, CASE WHEN ${q.group} IN ('party','product') THEN sum(net - ret) END DESC NULLS LAST, label DESC`;
-  const withMargin = rows.map((r) => ({ ...r, margin: d(r.net as string).gt(0) ? d(r.profit as string).div(d(r.net as string)).mul(100).toDecimalPlaces(2).toString() : null }));
-  const totals = dec(rows as never, ["qty", "gross", "returns", "net", "cost", "profit"]);
-  return { group: q.group, rows: withMargin, totals: { ...totals, docs: rows.reduce((s, r) => s + (r.docs as number), 0) }, currency: "IQD" };
+  const [dd] = await tx`SELECT count(DISTINCT si.id)::int AS n FROM sales_invoices si JOIN sales_lines sl ON sl.invoice_id = si.id ${flt}`;
+  // margin is a ratio: computed from each row's own profit and recognised revenue (never summed)
+  const withMargin = rows.map((r) => ({ ...r, margin: d(r.recognized as string).gt(0) ? d(r.profit as string).div(d(r.recognized as string)).mul(100).toDecimalPlaces(2).toString() : null }));
+  const totals = dec(rows as never, ["qty", "gross", "discount", "returns", "net", "recognized", "cost", "profit"]);
+  const margin = d(totals.recognized!).gt(0) ? d(totals.profit!).div(totals.recognized!).mul(100).toDecimalPlaces(2).toString() : null;
+  return { group: q.group, rows: withMargin, totals: { ...totals, margin, docs: dd!.n }, currency: "IQD" };
 }
 
 export async function purchasesReport(tx: Tx, q: ReportQuery) {
-  const product = q.group === "product";
+  const product = q.group === "product", pf = !!q.productId;       // product grouping/filter: invoice-level charges and returns are not attributable to one product, so only the line's own landed cost is shown
   const rows = await tx`
     WITH l AS (
       SELECT po.id AS doc_id, po.doc_no, po.doc_date, c.id AS party_id, c.name AS party, pl.product_id, p.code AS pcode, p.name AS pname,
@@ -58,12 +64,15 @@ export async function purchasesReport(tx: Tx, q: ReportQuery) {
            CASE ${q.group} WHEN 'party' THEN min(party) WHEN 'product' THEN min(pcode) || ' — ' || min(pname) WHEN 'month' THEN to_char(min(doc_date), 'YYYY-MM') ELSE min(doc_no) END AS label,
            CASE WHEN ${q.group} = 'invoice' THEN min(doc_date)::text END AS date, CASE WHEN ${q.group} = 'invoice' THEN min(party) END AS party,
            count(DISTINCT doc_id)::int AS docs, sum(qty_base)::text AS qty, sum(goods)::text AS goods,
-           CASE WHEN ${product} THEN NULL ELSE COALESCE((SELECT sum(ch.amount_base) FROM purchase_charges ch WHERE ch.purchase_id IN (SELECT doc_id FROM hdr WHERE hdr.key = k.key)), 0)::text END AS charges,
-           CASE WHEN ${product} THEN NULL ELSE COALESCE((SELECT sum(r.total_base) FROM purchase_returns r WHERE r.status = 'POSTED' AND r.purchase_id IN (SELECT doc_id FROM hdr WHERE hdr.key = k.key)), 0)::text END AS returns
+           CASE WHEN ${product} THEN NULL WHEN ${pf} THEN sum(landed)::text ELSE COALESCE((SELECT sum(ch.amount_base) FROM purchase_charges ch WHERE ch.purchase_id IN (SELECT doc_id FROM hdr WHERE hdr.key = k.key)), 0)::text END AS charges,
+           CASE WHEN ${product} OR ${pf} THEN NULL ELSE COALESCE((SELECT sum(r.total_base) FROM purchase_returns r WHERE r.status = 'POSTED' AND r.purchase_id IN (SELECT doc_id FROM hdr WHERE hdr.key = k.key)), 0)::text END AS returns
     FROM k GROUP BY k.key ORDER BY CASE WHEN ${q.group} IN ('invoice','month') THEN min(doc_date)::text END DESC NULLS LAST, sum(goods) DESC`;
   const t = dec(rows as never, ["qty", "goods", "charges", "returns"]);
   const netOf = (r: Record<string, unknown>) => d(r.goods as string).plus(r.charges ? d(r.charges as string) : 0).minus(r.returns ? d(r.returns as string) : 0).toString();
-  return { group: q.group, rows: rows.map((r) => ({ ...r, net: netOf(r) })), totals: { ...t, net: d(t.goods!).plus(t.charges!).minus(t.returns!).toString(), docs: rows.reduce((s, r) => s + (r.docs as number), 0) }, currency: "IQD" };
+  const [dd] = await tx`SELECT count(DISTINCT po.id)::int AS n FROM purchase_orders po JOIN purchase_lines pl ON pl.purchase_id = po.id WHERE po.status = 'POSTED' AND NOT po.is_opening
+      AND (${q.from ?? null}::date IS NULL OR po.doc_date >= ${q.from ?? null}::date) AND (${q.to ?? null}::date IS NULL OR po.doc_date <= ${q.to ?? null}::date)
+      AND (${q.partyId ?? null}::uuid IS NULL OR po.supplier_id = ${q.partyId ?? null}::uuid) AND (${q.productId ?? null}::uuid IS NULL OR pl.product_id = ${q.productId ?? null}::uuid)`;
+  return { group: q.group, rows: rows.map((r) => ({ ...r, net: netOf(r) })), totals: { ...t, net: d(t.goods!).plus(t.charges!).minus(t.returns!).toString(), docs: dd!.n }, currency: "IQD" };
 }
 
 /** Debtors (customers) / creditors (suppliers): detail = invoice by invoice; summary = one row per party and currency. */

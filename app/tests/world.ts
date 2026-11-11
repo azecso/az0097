@@ -86,6 +86,7 @@ export async function makeWorld(): Promise<World> {
   R.fxCheck = (await imp("@/app/api/fx-rates/check/route")).GET;
   R.report2 = (await imp("@/app/api/reports2/[id]/route")).GET;
   R.exportReport = (await imp("@/app/api/export-report/[id]/route")).GET;
+  R.salesReport = (await imp("@/app/api/reports/sales/route")).GET;
   R.cashAccounts = await imp("@/app/api/cash-accounts/route");
   R.ctransfers = await imp("@/app/api/cash-transfers/route");
   R.ctransferPost = (await imp("@/app/api/cash-transfers/[id]/post/route")).POST;

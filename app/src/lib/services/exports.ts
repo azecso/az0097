@@ -40,16 +40,18 @@ export function addSheet(wb: ExcelJS.Workbook, title: string, cols: Col[], rows:
   for (const r of rows) put(r);
   for (const r of boldRows) put(r, true);
   if (totals && rows.length) {
-    if (hasCur) {
-      for (const cur of [...new Set(rows.map((r) => String(r.currency ?? "")))].sort()) {
-        const t: Record<string, unknown> = { [cols[0]!.key]: `الإجمالي ${cur}`, currency: cur };
-        for (const k of totals) t[k] = rows.filter((r) => String(r.currency ?? "") === cur).reduce((s, r) => s.plus((r[k] as string) || 0), d(0)).toString();
-        put(t, true);
+    const last = rows.length + 1, letter = (k: string) => ws.getColumn(cols.findIndex((c) => c.key === k) + 1).letter;
+    const curCol = hasCur ? letter("currency") : "";
+    const groups = hasCur ? [...new Set(rows.map((r) => String(r.currency ?? "")))].sort() : [""];
+    for (const cur of groups) {                                                       // live formulas, one total row per currency (SUMIF), each with its exact cached result
+      const rs = hasCur ? rows.filter((r) => String(r.currency ?? "") === cur) : rows;
+      const t: Record<string, unknown> = { [cols[0]!.key]: hasCur ? `الإجمالي ${cur}` : "الإجمالي" }; if (hasCur) t.currency = cur;
+      for (const k of totals) {
+        const exact = rs.reduce((acc, r) => acc.plus((r[k] as string) || 0), d(0)); const v = numericCell(exact.toString(), hasCur ? placesOf(cur) : 0);
+        t[k] = typeof v === "number" ? { formula: hasCur ? `SUMIF(${curCol}2:${curCol}${last},"${cur}",${letter(k)}2:${letter(k)}${last})` : `SUM(${letter(k)}2:${letter(k)}${last})`, result: v } : v;
       }
-    } else {
-      const t: Record<string, unknown> = { [cols[0]!.key]: "الإجمالي" };
-      for (const k of totals) t[k] = rows.reduce((s, r) => s.plus((r[k] as string) || 0), d(0)).toString();
-      put(t, true);
+      const row = ws.addRow(t); row.font = { bold: true };
+      cols.forEach((c, i) => { if (c.kind === "money") row.getCell(i + 1).numFmt = hasCur && cur === "USD" ? FMT.usd : FMT.money; else if (c.kind && c.kind !== "text") row.getCell(i + 1).numFmt = FMT[c.kind]; });
     }
   }
   return ws;
@@ -85,7 +87,7 @@ export async function buildExport(tx: Tx, kind: ExportKind, id?: string | null, 
     const r = sales ? await salesReport(tx, q) : await purchasesReport(tx, q);
     const first = q.group === "invoice" ? [{ header: "التاريخ", key: "date" }, { header: sales ? "العميل" : "المورد", key: "party", width: 24 }] : [];
     const cols: Col[] = [{ header: q.group === "invoice" ? "الفاتورة" : q.group === "party" ? (sales ? "العميل" : "المورد") : q.group === "product" ? "المادة" : "الشهر", key: "label", width: 30 }, ...first, { header: "عدد المستندات", key: "docs", kind: "qty" }, { header: "الكمية", key: "qty", kind: "qty" },
-      ...(sales ? [{ header: "المبيعات", key: "gross", kind: "money" as const }, { header: "المرتجعات", key: "returns", kind: "money" as const }, { header: "الصافي", key: "net", kind: "money" as const }, { header: "التكلفة", key: "cost", kind: "money" as const }, { header: "الربح", key: "profit", kind: "money" as const }, { header: "الهامش %", key: "margin", kind: "qty" as const }]
+      ...(sales ? [{ header: "المبيعات قبل الخصم", key: "gross", kind: "money" as const }, { header: "الخصومات", key: "discount", kind: "money" as const }, { header: "المرتجعات", key: "returns", kind: "money" as const }, { header: "الصافي (المفوتر)", key: "net", kind: "money" as const }, { header: "الإيراد المعترف به (المسلَّم)", key: "recognized", kind: "money" as const }, { header: "التكلفة", key: "cost", kind: "money" as const }, { header: "الربح", key: "profit", kind: "money" as const }, { header: "الهامش %", key: "margin", kind: "qty" as const }]
         : [{ header: "قيمة البضاعة", key: "goods", kind: "money" as const }, { header: "مصاريف الشراء", key: "charges", kind: "money" as const }, { header: "المرتجعات", key: "returns", kind: "money" as const }, { header: "الصافي", key: "net", kind: "money" as const }])];
     addSheet(wb, sales ? "تقرير المبيعات" : "تقرير المشتريات", cols, r.rows as never, cols.filter((c) => c.kind === "money").map((c) => c.key));
   } else if (kind === "debtors" || kind === "creditors") {
