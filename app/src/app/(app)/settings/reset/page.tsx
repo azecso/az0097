@@ -25,7 +25,7 @@ export default function ResetPage() {
     <div className="card"><h2>1) أنشئ نسخة كاملة موثّقة</h2>
       <p>تُحفظ على الخادم وتُقرأ للتحقق منها، وتشمل كل السجلات والمرفقات. أي عملية تحدث بعدها تُبطل النسخة وتلزم نسخة جديدة. لا تعتمد على هذه النسخة وحدها: يبقى النسخ التشغيلي الدوري (ops/backup.sh) هو الأساس.</p>
       <button className="primary" onClick={prepare} disabled={busy || !st?.enabled}>إنشاء النسخة</button>
-      {prep && <p>✔ {prep.file} — {rows} سجل، {prep.attachments} مرفق، {Math.round(prep.bytes / 1024)} KB — <a href={`/api/settings/reset/download?file=${encodeURIComponent(prep.file)}`}>تنزيل نسخة على جهازك</a></p>}</div>
+      {prep && <p>✔ {prep.file} — {rows} سجل، {prep.attachments} مرفق، {Math.floor(prep.bytes / 1024)} KB — <a href={`/api/settings/reset/download?file=${encodeURIComponent(prep.file)}`}>تنزيل نسخة على جهازك</a></p>}</div>
     <div className="card"><h2>2) أكّد</h2>
       <label htmlFor="ph">اكتب العبارة: <b>{PHRASE}</b></label><input id="ph" value={phrase} onChange={(e) => setPhrase(e.target.value)} autoComplete="off" />
       <label htmlFor="cd">رمز المصادقة الثنائية (إن كانت مفعّلة)</label><input id="cd" dir="ltr" inputMode="numeric" value={code} onChange={(e) => setCode(e.target.value)} autoComplete="one-time-code" />
