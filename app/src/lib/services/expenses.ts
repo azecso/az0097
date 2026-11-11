@@ -5,6 +5,7 @@ import { audit, type Actor } from "../audit";
 import type { Principal } from "../authz";
 import { badRequest, conflict, notFound } from "../errors";
 import { d, toBase } from "../money";
+import { settleLiability } from "../fx-settlement";
 import { postJournal, reverseEntry, type JLine } from "../ledger";
 import { assertCashAvailable } from "./cash";
 import { currencyCode, dateStr, draftRef, moneyStr, rateStr, resolveRate, uuid, yearOf } from "./common";
@@ -113,7 +114,7 @@ export async function reverseExpense(tx: Tx, who: Principal, actor: Actor, id: s
 }
 
 // =========================== payments of accrued / partner-payable expenses ===========================
-export const expensePaymentSchema = z.object({ expenseId: uuid, docDate: dateStr, cashAccountId: uuid, amount: moneyStr });
+export const expensePaymentSchema = z.object({ expenseId: uuid, docDate: dateStr, cashAccountId: uuid, amount: moneyStr, exchangeRate: rateStr.nullish() });
 
 /** Pays a liability: Dr 2210 (accrued) or 2300 (owed to partner), Cr cash. It never creates a second expense. */
 export async function payExpense(tx: Tx, who: Principal, actor: Actor, i: z.infer<typeof expensePaymentSchema>) {
@@ -125,14 +126,14 @@ export async function payExpense(tx: Tx, who: Principal, actor: Actor, i: z.infe
   const c = await cashRow(tx, i.cashAccountId);
   if (!c || c.currency !== e.currency) throw badRequest("CASH_CURRENCY_MISMATCH", "عملة الصندوق يجب أن تطابق عملة المصروف");
   await assertCashAvailable(tx, i.cashAccountId, i.amount);
-  const base = toBase(i.amount, e.exchange_rate_snapshot, e.currency);
+  const payRate = await resolveRate(tx, e.currency, i.docDate, i.exchangeRate ?? undefined);
   const docNo = (await tx`SELECT next_document_number(${who.companyId}, 'expense_payment', ${yearOf(i.docDate)}) AS n`)[0]!.n as string;
   const partner = e.payment_mode === "PAID_BY_PARTNER" ? await partnerOf(tx, "PARTNER") : null;
-  const [p] = await tx`INSERT INTO expense_payments(company_id, draft_ref, doc_date, expense_id, cash_account_id, amount, amount_base, created_by)
-    VALUES (${who.companyId}, ${draftRef()}, ${i.docDate}, ${e.id}, ${i.cashAccountId}, ${i.amount}, ${base.toString()}, ${who.userId}) RETURNING id`;
-  const je = await postJournal(tx, actor, { date: i.docDate, sourceDocType: "expense_payment", sourceDocId: p!.id, memo: `سداد ${e.payment_mode === "ACCRUED" ? "مصروف مستحق" : "ذمة الشريك"} ${e.doc_no}`,
-    lines: [{ account: e.payment_mode === "ACCRUED" ? "2210" : "2300", debit: base, currency: e.currency, amountOrig: i.amount, fx: e.exchange_rate_snapshot, partnerId: partner },
-            { account: c.code, credit: base, currency: e.currency, amountOrig: i.amount, fx: e.exchange_rate_snapshot }] });
+  const st = settleLiability({ liabilityAccount: e.payment_mode === "ACCRUED" ? "2210" : "2300", cashAccount: c.code, currency: e.currency, amount: i.amount, bookedRate: e.exchange_rate_snapshot, paymentRate: payRate, partnerId: partner });
+  const base = st.cashBase;
+  const [p] = await tx`INSERT INTO expense_payments(company_id, draft_ref, doc_date, expense_id, cash_account_id, amount, amount_base, exchange_rate_snapshot, fx_diff_base, created_by)
+    VALUES (${who.companyId}, ${draftRef()}, ${i.docDate}, ${e.id}, ${i.cashAccountId}, ${i.amount}, ${base.toString()}, ${payRate}, ${st.diff.toString()}, ${who.userId}) RETURNING id`;
+  const je = await postJournal(tx, actor, { date: i.docDate, sourceDocType: "expense_payment", sourceDocId: p!.id, memo: `سداد ${e.payment_mode === "ACCRUED" ? "مصروف مستحق" : "ذمة الشريك"} ${e.doc_no}`, lines: st.lines });
   await tx`UPDATE expense_payments SET status = 'POSTED', doc_no = ${docNo}, posted_by = ${who.userId}, posted_at = now(), journal_entry_id = ${je}, version = version + 1, updated_at = now() WHERE id = ${p!.id}`;
   await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id) VALUES (${who.companyId}, ${c.id}, ${d(i.amount).neg().toString()}, ${base.neg().toString()}, 'expense_payment', ${p!.id})`;
   await audit(tx, actor, { action: "expense_payment.post", entityType: "expense_payment", entityId: p!.id, after: { docNo, amount: i.amount } });
@@ -205,7 +206,7 @@ export async function deleteAccrualDraft(tx: Tx, actor: Actor, id: string) {
   await tx`DELETE FROM payroll_accruals WHERE id = ${id}`;
   await audit(tx, actor, { action: "payroll.delete_draft", entityType: "payroll_accrual", entityId: id });
 }
-export const payrollPaySchema = z.object({ accrualId: uuid, docDate: dateStr, cashAccountId: uuid, amount: moneyStr });
+export const payrollPaySchema = z.object({ accrualId: uuid, docDate: dateStr, cashAccountId: uuid, amount: moneyStr, exchangeRate: rateStr.nullish() });
 
 /** Paying a salary reduces the liability (Dr 2200 / Cr cash); it is NOT a new expense. */
 export async function payAccrual(tx: Tx, who: Principal, actor: Actor, i: z.infer<typeof payrollPaySchema>) {
@@ -216,11 +217,12 @@ export async function payAccrual(tx: Tx, who: Principal, actor: Actor, i: z.infe
   const c = await cashRow(tx, i.cashAccountId);
   if (!c || c.currency !== a.currency) throw badRequest("CASH_CURRENCY_MISMATCH");
   await assertCashAvailable(tx, i.cashAccountId, i.amount);
-  const base = toBase(i.amount, a.exchange_rate_snapshot, a.currency);
+  const payRate = await resolveRate(tx, a.currency, i.docDate, i.exchangeRate ?? undefined);
+  const st = settleLiability({ liabilityAccount: "2200", cashAccount: c.code, currency: a.currency, amount: i.amount, bookedRate: a.exchange_rate_snapshot, paymentRate: payRate });
+  const base = st.cashBase;
   const docNo = (await tx`SELECT next_document_number(${who.companyId}, 'payroll_payment', ${yearOf(i.docDate)}) AS n`)[0]!.n as string;
-  const [p] = await tx`INSERT INTO payroll_payments(company_id, accrual_id, cash_account_id, doc_no, doc_date, amount, amount_base, created_by) VALUES (${who.companyId}, ${a.id}, ${i.cashAccountId}, ${docNo}, ${i.docDate}, ${i.amount}, ${base.toString()}, ${who.userId}) RETURNING id`;
-  const je = await postJournal(tx, actor, { date: i.docDate, sourceDocType: "payroll_payment", sourceDocId: p!.id, memo: `دفع راتب ${docNo}`,
-    lines: [{ account: "2200", debit: base, currency: a.currency, amountOrig: i.amount, fx: a.exchange_rate_snapshot }, { account: c.code, credit: base, currency: a.currency, amountOrig: i.amount, fx: a.exchange_rate_snapshot }] });
+  const [p] = await tx`INSERT INTO payroll_payments(company_id, accrual_id, cash_account_id, doc_no, doc_date, amount, amount_base, exchange_rate_snapshot, fx_diff_base, created_by) VALUES (${who.companyId}, ${a.id}, ${i.cashAccountId}, ${docNo}, ${i.docDate}, ${i.amount}, ${base.toString()}, ${payRate}, ${st.diff.toString()}, ${who.userId}) RETURNING id`;
+  const je = await postJournal(tx, actor, { date: i.docDate, sourceDocType: "payroll_payment", sourceDocId: p!.id, memo: `دفع راتب ${docNo}`, lines: st.lines });
   await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id) VALUES (${who.companyId}, ${c.id}, ${d(i.amount).neg().toString()}, ${base.neg().toString()}, 'payroll_payment', ${p!.id})`;
   await audit(tx, actor, { action: "payroll.pay", entityType: "payroll_payment", entityId: p!.id, after: { docNo, amount: i.amount, je } });
   return { id: p!.id as string, docNo };
