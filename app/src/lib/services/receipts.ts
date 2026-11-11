@@ -211,7 +211,6 @@ export async function amendReceipt(tx: Tx, who: Principal, actor: Actor, id: str
   const [r] = await tx`SELECT * FROM customer_receipts WHERE id = ${id} FOR UPDATE`;
   if (!r) throw notFound();
   if (r.status !== "POSTED") throw conflict("NOT_POSTED", "التعديل بهذه الطريقة للسندات المرحّلة فقط");
-  if (r.auto_for_invoice_id) throw conflict("AUTO_RECEIPT", "هذا قبض تلقائي لبيع نقدي؛ عدّل الفاتورة نفسها");
   if (r.version !== i.version) throw conflict("VERSION_CONFLICT", "تم تعديل السند من جهة أخرى؛ أعد فتحه");
   await unpostReceipt(tx, actor, id, "تعديل سند قبض");
   await validate(tx, i, who);

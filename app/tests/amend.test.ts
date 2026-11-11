@@ -35,10 +35,12 @@ describe("editing a posted invoice keeps its number and hides the old version", 
     const rc = await w.api(w.owner, w.R.receipts.POST, { method: "POST", body: { customerId: g.customerId, docDate: "2026-03-06", cashAccountId: w.ids.cashIQD, currency: "IQD", amount: "400", allocations: [{ invoiceId: inv, amount: "400" }] } });
     await w.api(w.owner, w.R.receiptPost, { method: "POST", params: { id: rc.body.id } });
     const rno = (await w.api(w.owner, w.R.receiptId.GET, { params: { id: rc.body.id } })).body.docNo;
-    expect((await amend(inv, body(g, "1", "300"))).body.error.code).toBe("RECEIPT_EXCEEDS_NEW_TOTAL");     // 300 < 400 collected: nothing changes
-    expect((await w.getInvoice(inv)).status).toBe("POSTED");
-    const ok = await amend(inv, body(g, "2", "1000")); expect(ok.status).toBe(200);
-    const ng = await w.getInvoice(ok.body.id); expect(ng).toMatchObject({ docNo: g.docNo, net: "2000.0000", collected: "400.0000", outstanding: "1600" });
+    const cash0 = bal(await w.tb(), "1110");
+    const low = await amend(inv, body(g, "1", "300")); expect(low.status).toBe(200);                          // 300 < 400 collected: real cash stays, the surplus becomes customer credit
+    expect(await w.getInvoice(low.body.id)).toMatchObject({ docNo: g.docNo, net: "300.0000", collected: "300.0000", outstanding: "0" });
+    expect(bal(await w.tb(), "1110") - cash0).toBe(0); expect(bal(await w.tb(), "2400")).toBe(-100);          // 100 customer credit, no cash deleted, no new receipt
+    const ok = await amend(low.body.id, body(await w.getInvoice(low.body.id), "2", "1000")); expect(ok.status).toBe(200);
+    const ng = await w.getInvoice(ok.body.id); expect(ng).toMatchObject({ docNo: g.docNo, net: "2000.0000", collected: "300.0000", outstanding: "1700" });
     const after = (await w.api(w.owner, w.R.receiptId.GET, { params: { id: rc.body.id } })).body; expect(after).toMatchObject({ docNo: rno, status: "POSTED" }); expect((await w.tb()).balanced).toBe(true);
     expect((await amend(ok.body.id, body(await w.getInvoice(ok.body.id), "1", "100"), w.acct)).status).toBe(403);
     expect((await amend(ok.body.id, body({ ...(await w.getInvoice(ok.body.id)) }, "1", "100", { version: 999 }))).body.error.code).toBe("VERSION_CONFLICT");
@@ -61,7 +63,12 @@ describe("editing a posted invoice keeps its number and hides the old version", 
     const inv = (await w.sale({ product: P, qty: "1", price: "2000", date: "2026-03-12", type: "CASH" })).id; const g = await w.getInvoice(inv);
     expect(bal(await w.tb(), "1110") - before).toBe(2000);
     const r = await amend(inv, body(g, "1", "3000", { saleType: "CASH", cashAccountId: w.ids.cashIQD })); expect(r.status).toBe(200);
-    expect(bal(await w.tb(), "1110") - before).toBe(3000); expect((await w.getInvoice(r.body.id)).outstanding).toBe("0");
+    // the cash sale's own receipt follows the invoice but is NOT silently re-created for the new total: partly paid until the receipt is edited
+    expect(bal(await w.tb(), "1110") - before).toBe(2000); expect((await w.getInvoice(r.body.id)).outstanding).toBe("1000");
+    const auto = (await w.api(w.owner, w.R.receipts.GET)).body.find((x: any) => x.autoForInvoice === r.body.id); expect(auto).toBeTruthy();
+    const form = (await w.api(w.owner, w.R.receiptEdit, { params: { id: auto.id } })).body;
+    const e = await w.api(w.owner, w.R.receiptAmend, { method: "POST", params: { id: auto.id }, body: { customerId: g.customerId, docDate: "2026-03-12", kind: "CASH", cashAccountId: w.ids.cashIQD, currency: "IQD", amount: "3000", allocations: [{ invoiceId: r.body.id, amount: "3000" }], version: form.version } });
+    expect(e.status).toBe(200); expect(bal(await w.tb(), "1110") - before).toBe(3000); expect((await w.getInvoice(r.body.id)).outstanding).toBe("0");
   });
 });
 
@@ -75,7 +82,6 @@ describe("editing a posted receipt keeps its number", () => {
     expect(edit.status).toBe(200); expect(edit.body.docNo).toBe(cur.docNo);
     expect(bal(await w.tb(), "1110") - cash0).toBe(-100); expect((await w.getInvoice(inv)).outstanding).toBe("300"); expect((await w.tb()).balanced).toBe(true);
     const form = (await w.api(w.owner, w.R.receiptEdit, { params: { id: rc.body.id } })).body; expect(form.allocations[0]).toMatchObject({ docNo: g.docNo, cash: "700.0000", outstandingWithout: "1000" });
-    const auto = (await w.api(w.owner, w.R.receipts.GET)).body.find((x: any) => x.autoForInvoice); if (auto) expect((await w.api(w.owner, w.R.receiptAmend, { method: "POST", params: { id: auto.id }, body: { ...mk("1"), version: 1 } })).body.error.code).toBe("AUTO_RECEIPT");
     expect((await w.api(w.acct, w.R.receiptAmend, { method: "POST", params: { id: rc.body.id }, body: { ...mk("600"), version: 99 } })).status).toBe(403);
     expect((await w.api(w.owner, w.R.receiptAmend, { method: "POST", params: { id: rc.body.id }, body: { ...mk("600"), version: 1 } })).body.error.code).toBe("VERSION_CONFLICT");
   });

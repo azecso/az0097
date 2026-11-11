@@ -183,7 +183,7 @@ export async function getInvoice(tx: Tx, id: string) {
 }
 
 /** Posting: revenue/AR (+discount) entry; goods issue (COGS by FIFO) with the invoice or later; a CASH sale also records its receipt. One transaction. */
-export async function postInvoice(tx: Tx, who: Principal, actor: Actor, id: string) {
+export async function postInvoice(tx: Tx, who: Principal, actor: Actor, id: string, opts: { skipAutoReceipt?: boolean } = {}) {
   const [inv] = await tx`SELECT * FROM sales_invoices WHERE id = ${id} FOR UPDATE`;
   if (!inv) throw notFound();
   if (inv.status !== "DRAFT") throw conflict("NOT_DRAFT", "المستند ليس مسودة");
@@ -223,7 +223,7 @@ export async function postInvoice(tx: Tx, who: Principal, actor: Actor, id: stri
     const dn = await createDeliveryDraft(tx, who, actor, { invoiceId: id, docDate: date, lines: lines.map((l) => ({ salesLineId: l.id, qtyBase: l.qty_base })), autoCreated: true });
     deliveryNo = (await postDelivery(tx, who, actor, dn.id)).docNo;
   }
-  if (inv.sale_type === "CASH") {
+  if (inv.sale_type === "CASH" && !opts.skipAutoReceipt) {
     await createCashReceipt(tx, who, actor, { customerId: inv.customer_id, docDate: date, cashAccountId: inv.cash_account_id, currency: cur, rate: fx, amount: inv.net, invoiceId: id, auto: true });
   }
   await audit(tx, actor, { action: "sales_invoice.post", entityType: "sales_invoice", entityId: id, after: { docNo, netBase: netBase.toString(), deliveryNo } });
@@ -263,21 +263,44 @@ export async function amendInvoice(tx: Tx, who: Principal, actor: Actor, id: str
   if (inv.status !== "POSTED") throw conflict("NOT_POSTED", "التعديل بهذه الطريقة للفواتير المرحّلة فقط");
   if (inv.version !== i.version) throw conflict("VERSION_CONFLICT", "تم تعديل الفاتورة من جهة أخرى؛ أعد فتحها");
   if ((await tx`SELECT 1 FROM profit_settlement_lines l JOIN profit_settlements s ON s.id = l.settlement_id WHERE l.invoice_id = ${id} AND s.status = 'POSTED'`).length)
-    throw conflict("IN_SETTLEMENT", "أرباح هذه الفاتورة داخلة في تسوية أرباح معتمدة؛ اعكس التسوية أولاً");
+    throw conflict("IN_SETTLEMENT", "أرباح هذه الفاتورة وُزِّعت في تسوية معتمدة، فلا تُعدَّل مباشرة حتى لا تتغير أرباح سبق توزيعها. المسار: (1) إن كان التصحيح بسيطاً أنشئ مرتجعاً أو فاتورة تصحيحية بتاريخ مفتوح؛ أو (2) اعكس التسوية الأحدث (المالك) ثم صحّح الفاتورة ثم أعد التسوية.");
   if (inv.delivery_mode === "SEPARATE" && (await tx`SELECT 1 FROM delivery_notes WHERE invoice_id = ${id} AND status = 'POSTED'`).length)
-    throw conflict("HAS_DELIVERIES", "توجد سندات تسليم مرحّلة لهذه الفاتورة؛ اعكسها أولاً");
+    throw conflict("HAS_DELIVERIES", "للفاتورة سندات تسليم مرحّلة (تسليم منفصل). المسار: اعكس سندات التسليم من «تسجيل تسليم» ثم صحّح الفاتورة وأعد التسليم، أو سجّل مرتجعاً لما يلزم تصحيحه.");
   // receipts collected on this invoice follow it: un-post them (same numbers), edit the invoice, then re-link and re-post them
-  const rcs = (await tx`SELECT DISTINCT r.id FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id WHERE a.invoice_id = ${id} AND r.status = 'POSTED' AND r.auto_for_invoice_id IS DISTINCT FROM ${id}`).map((r) => r.id as string);
+  const rcRows = await tx`SELECT DISTINCT r.id, r.auto_for_invoice_id AS auto, r.doc_date, r.created_at FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id WHERE a.invoice_id = ${id} AND r.status = 'POSTED' ORDER BY r.doc_date, r.created_at`;
+  const rcs = rcRows.map((r) => r.id as string), hadAuto = rcRows.some((r) => r.auto === id);
   for (const r of rcs) await unpostReceipt(tx, actor, r, "تعديل الفاتورة — إعادة احتساب سند القبض");
   await reverseInvoice(tx, who, actor, id, "تعديل الفاتورة");                       // still refuses when there are returns
   await tx`SELECT set_config('app.amend', 'on', true)`;
   await tx`UPDATE sales_invoices SET doc_no = ${`${inv.doc_no}~r${Date.now().toString(36)}`}, updated_at = now() WHERE id = ${id}`;
   const created = await createInvoice(tx, who, actor, { ...i, quoteId: inv.quote_id });
   await tx`UPDATE sales_invoices SET doc_no = ${inv.doc_no}, amended_from = ${id} WHERE id = ${created.id}`;
-  const posted = (await postInvoice(tx, who, actor, created.id as string)) as unknown as { docNo: string };
+  const posted = (await postInvoice(tx, who, actor, created.id as string, { skipAutoReceipt: hadAuto })) as unknown as { docNo: string };   // the cash sale's own receipt follows the invoice: it is NOT re-created
   if (rcs.length) {
     await tx`UPDATE receipt_allocations SET invoice_id = ${created.id} WHERE invoice_id = ${id} AND receipt_id = ANY(${rcs}::uuid[])`;
-    for (const r of rcs) { try { await postReceipt(tx, who, actor, r); } catch (e) { if ((e as { code?: string }).code === "OVER_ALLOCATION") throw conflict("RECEIPT_EXCEEDS_NEW_TOTAL", "قيمة الفاتورة بعد التعديل أقل مما قُبض عليها؛ عدّل سند القبض أولاً أو زد قيمة الفاتورة"); throw e; } }
+    await tx`UPDATE customer_receipts SET auto_for_invoice_id = ${created.id} WHERE auto_for_invoice_id = ${id} AND id = ANY(${rcs}::uuid[])`;
+    // Money really received stays. If the corrected invoice is worth less than what was collected, the allocations are cut to what the invoice can take;
+    // the rest of each receipt stays a real, unallocated amount and becomes customer credit (never deleted, never silently refunded).
+    let room = d(posted ? (await tx`SELECT net FROM sales_invoices WHERE id = ${created.id}`)[0]!.net : 0);
+    for (const ext of [false, true]) {
+      for (const r of rcs) {
+        const rows = await tx`SELECT id, amount::text AS amount, external FROM receipt_allocations WHERE receipt_id = ${r} AND invoice_id = ${created.id} AND external = ${ext}`;
+        for (const a of rows) {
+          const keep = Decimal.min(d(a.amount as string), room);
+          if (keep.lt(d(a.amount as string))) { if (keep.lte(0)) await tx`DELETE FROM receipt_allocations WHERE id = ${a.id}`; else await tx`UPDATE receipt_allocations SET amount = ${keep.toString()} WHERE id = ${a.id}`; }
+          room = room.minus(keep);
+        }
+      }
+    }
+    for (const r of rcs) {
+      const [rc] = await tx`SELECT kind, amount::text AS amount FROM customer_receipts WHERE id = ${r}`;
+      if (rc!.kind === "CREDIT_APPLICATION") {                               // a credit application can only use what it applies
+        const used = (await tx`SELECT COALESCE(sum(amount), 0)::text AS s FROM receipt_allocations WHERE receipt_id = ${r}`)[0]!.s as string;
+        if (d(used).lte(0)) throw conflict("CREDIT_APPLICATION_EMPTY", "الفاتورة بعد التصحيح لا تستوعب تسوية الرصيد الدائن المرتبطة بها؛ ألغِ تلك التسوية أولاً ثم صحّح الفاتورة");
+        await tx`UPDATE customer_receipts SET amount = ${used} WHERE id = ${r}`;
+      }
+      await postReceipt(tx, who, actor, r);
+    }
   }
   await audit(tx, actor, { action: "sales_invoice.amend", entityType: "sales_invoice", entityId: created.id, before: { id, docNo: inv.doc_no, net: inv.net }, after: { docNo: posted.docNo } });
   return { id: created.id as string, docNo: posted.docNo as string };

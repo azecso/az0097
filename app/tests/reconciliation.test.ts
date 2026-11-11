@@ -14,7 +14,7 @@ const rec = async () => (await w.api(w.owner, w.R.reconcile)).body;
 
 describe("reconciliation screen", () => {
   it("a normal book (sales, separate delivery not yet delivered, collections) reconciles on every check", async () => {
-    const r = await rec(); expect(r.ok, JSON.stringify(r.checks.filter((c: any) => !c.ok))).toBe(true); expect(r.checks.map((c: any) => c.code)).toEqual(["TRIAL_BALANCE", "INVENTORY", "CASH", "RECEIVABLES", "DEFERRED_REVENUE", "CUSTOMER_CREDIT", "PARTNER_PROFIT", "PROFIT_RESERVE"]);
+    const r = await rec(); expect(r.ok, JSON.stringify(r.checks.filter((c: any) => !c.ok))).toBe(true); expect(r.checks.map((c: any) => c.code)).toEqual(["TRIAL_BALANCE", "INVENTORY", "CASH", "RECEIVABLES", "DEFERRED_REVENUE", "CUSTOMER_CREDIT", "PARTNER_PROFIT", "PROFIT_RESERVE", "OUTSIDE_MARGIN"]);
   });
   it("an orphan cash movement is located: which account, the ledger figure, the movement figure and the difference", async () => {
     const acc = (await w.env.admin`SELECT id FROM cash_accounts WHERE kind = 'MAIN_CASH' AND currency = 'IQD'`)[0]!.id;
