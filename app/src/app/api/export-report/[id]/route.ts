@@ -15,7 +15,7 @@ export async function GET(req: NextRequest, c: { params: Promise<{ id: string }>
     const f = filtersOf(new URL(req.url).searchParams);
     const r = await withTenant(who.companyId, async (tx) => { await require_(tx, who, "report", "export"); return def.run(tx, f); });
     const wb = new ExcelJS.Workbook(); wb.creator = "النظام المحاسبي"; wb.created = new Date();
-    const cols = r.columns.map((x) => ({ header: x.label, key: x.key, kind: x.kind === "pct" ? ("pct" as const) : x.kind, width: x.kind ? 16 : 28 }));
+    const cols = r.columns.map((x) => ({ header: x.label, key: x.key, kind: x.kind === "pct" ? ("pct" as const) : x.kind, width: x.kind ? 16 : 28, cur: x.cur }));
     const hasCur = r.rows.some((x) => x.currency);
     const ws = addSheet(wb, def.title, hasCur && !cols.some((x) => x.key === "currency") ? [...cols.slice(0, 1), { header: "العملة", key: "currency", kind: "text" as const, width: 10 }, ...cols.slice(1)] : cols, [...r.rows] as never, undefined, r.totals as never);
     ws.addRow([]); ws.addRow([`${def.title} — ${def.definition}`]); for (const n of r.notes) ws.addRow([n]); ws.addRow([`الفلاتر: ${Object.entries(f).map(([k, v]) => `${k}=${v}`).join(" ") || "—"}`]);

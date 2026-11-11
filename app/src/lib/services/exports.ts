@@ -10,7 +10,7 @@ import { listPurchases } from "./purchases";
 import { customersSummary, externalProfitReport, balancesReport, productMovement, purchasesReport, reportQuery, salesReport } from "./analytics";
 import { listCapitalReturns } from "./capital-returns";
 
-type Col = { header: string; key: string; width?: number; kind?: "money" | "qty" | "text" | "pct" };
+type Col = { header: string; key: string; width?: number; kind?: "money" | "qty" | "text" | "pct"; cur?: string };
 const FMT = { money: "#,##0;[Red]-#,##0", usd: "#,##0.00;[Red]-#,##0.00", qty: "#,##0.######", pct: "0.00" } as const;
 const MAX_SAFE_DIGITS = 15;                                         // Excel stores doubles: beyond 15 significant digits a number would silently lose precision
 
@@ -33,9 +33,9 @@ export function addSheet(wb: ExcelJS.Workbook, title: string, cols: Col[], rows:
   const hasCur = cols.some((c) => c.key === "currency");
   const put = (r: Record<string, unknown>, bold = false) => {
     const out: Record<string, unknown> = {};
-    for (const c of cols) { const v = r[c.key]; out[c.key] = (c.kind === "money" || c.kind === "qty" || c.kind === "pct") && v !== null && v !== undefined && v !== "" ? numericCell(v, c.kind === "money" ? placesOf(hasCur ? r.currency : "IQD") : undefined) : v ?? ""; }
+    for (const c of cols) { const v = r[c.key]; out[c.key] = (c.kind === "money" || c.kind === "qty" || c.kind === "pct") && v !== null && v !== undefined && v !== "" ? numericCell(v, c.kind === "money" ? placesOf(c.cur ?? (hasCur ? r.currency : "IQD")) : undefined) : v ?? ""; }
     const row = ws.addRow(out); if (bold) row.font = { bold: true };
-    cols.forEach((c, i) => { if (c.kind === "money") row.getCell(i + 1).numFmt = hasCur && r.currency === "USD" ? FMT.usd : FMT.money; else if (c.kind && c.kind !== "text") row.getCell(i + 1).numFmt = FMT[c.kind]; });
+    cols.forEach((c, i) => { if (c.kind === "money") row.getCell(i + 1).numFmt = (c.cur ?? (hasCur ? r.currency : "IQD")) === "USD" ? FMT.usd : FMT.money; else if (c.kind && c.kind !== "text") row.getCell(i + 1).numFmt = FMT[c.kind]; });
   };
   for (const r of rows) put(r);
   for (const r of boldRows) put(r, true);

@@ -1,5 +1,6 @@
 import type { Tx } from "../db";
 import { badRequest } from "../errors";
+import Decimal from "decimal.js";
 import { d } from "../money";
 import { trialBalance } from "./reports";
 import { computeSettlement, partnersOverview } from "./settlements";
@@ -10,12 +11,13 @@ import { invoiceProfit } from "./sales";
  * so they cannot disagree. Money stays an exact decimal string until the very last formatting step. Money columns of a row are in the row's `currency` (IQD when absent).
  */
 export type Row = Record<string, string | null>;
-export interface Col { key: string; label: string; kind?: "text" | "money" | "qty" | "pct"; href?: string }   // href = row key that holds the drill-down link
+export interface Col { key: string; label: string; kind?: "text" | "money" | "qty" | "pct"; href?: string; cur?: string }   // cur: this money column is ALWAYS in that currency (e.g. dinar cost beside a dollar invoice)   // href = row key that holds the drill-down link
 export interface Filters { from?: string; to?: string; asOf?: string; partyId?: string; account?: string; productId?: string; currency?: string; locationId?: string; side?: string }
 export interface Result { columns: Col[]; rows: Row[]; totals: Row[]; notes: string[] }
 export interface Def { id: string; title: string; basis: "period" | "asOf" | "snapshot"; definition: string; filters: (keyof Filters)[]; run: (tx: Tx, f: Filters) => Promise<Result> }
 
 const today = () => new Date().toISOString().slice(0, 10);
+const Decimal0 = (v: ReturnType<typeof d>) => (v.isNegative() ? d(0) : v);
 const S = (v: unknown) => (v === null || v === undefined ? null : String(v));
 const sum = (rows: Row[], k: string) => rows.reduce((a, r) => a.plus(r[k] || 0), d(0));
 /** Per-currency totals of the given money keys. */
@@ -229,5 +231,68 @@ const profits: Def = { id: "profit-statement", title: "كشف الأرباح و�
     return { columns: [{ key: "label", label: "البند" }, { key: "amount", label: "المبلغ (IQD)", kind: "money" }], rows, totals: [], notes: ["كل المبالغ بالدينار العراقي؛ الصرف بالدينار فقط", "الربح المحاسبي ≠ الربح المؤهل ≠ السيولة: ثلاثة مقاييس مستقلة"] };
   } };
 
-export const REPORTS: Def[] = [profits, trial, ledger, pnl, bs, statement("customer"), statement("supplier"), inventory, cashMv];
+// ------------------------------------------------------------------ profit-outside-distribution goods: batches and their sales, linked by real lot/line/receipt links
+const ROOT_LOTS = `WITH RECURSIVE root AS (SELECT id, id AS root_id, origin_line_id AS pl FROM stock_lots WHERE source_lot_id IS NULL
+    UNION ALL SELECT l.id, r.root_id, r.pl FROM stock_lots l JOIN root r ON l.source_lot_id = r.id)`;
+const outsideBatches: Def = { id: "outside-batches", title: "دفعات «الربح خارج التوزيع»", basis: "snapshot", filters: ["from", "to", "partyId", "productId"],
+  definition: "لكل سطر شراء مصنَّف «الربح خارج التوزيع»: المورد ورقم وتاريخ فاتورة الشراء والمادة والكمية وكلفة الشراء، وأين البضاعة الآن (موقع)، والمباع والمرتجع والمتبقي. الربط فعلي عبر الطبقات (حتى بعد التحويل بين المخزن والعهدة)، لا بالأسماء. «من/إلى» على تاريخ فاتورة الشراء. الحالة حتى اليوم.",
+  async run(tx, f) {
+    const rows = await tx.unsafe(`${ROOT_LOTS}
+      SELECT pl.id AS plid, po.id AS poid, po.doc_no, po.doc_date::text AS pdate, c.name AS supplier, p.code, p.name AS pname, pl.qty_base::text AS qty, (pl.line_total_base + pl.landed_cost_base)::text AS cost,
+        COALESCE((SELECT string_agg(sl.name || ': ' || q.q, '، ') FROM (SELECT l.location_id, sum(l.qty_remaining)::text AS q FROM stock_lots l JOIN root r ON r.id = l.id WHERE r.pl = pl.id AND l.qty_remaining > 0 GROUP BY l.location_id) q JOIN stock_locations sl ON sl.id = q.location_id), '—') AS locs,
+        COALESCE((SELECT sum(l.qty_remaining) FROM stock_lots l JOIN root r ON r.id = l.id WHERE r.pl = pl.id), 0)::text AS remaining,
+        COALESCE((SELECT sum(cn.qty) FROM stock_lot_consumptions cn JOIN root r ON r.id = cn.lot_id JOIN delivery_lines dl ON dl.id = cn.doc_line_id JOIN delivery_notes dn ON dn.id = dl.delivery_id
+                  WHERE r.pl = pl.id AND cn.doc_type = 'delivery_note' AND dn.status = 'POSTED'), 0)::text AS sold,
+        COALESCE((SELECT sum(rt.qty) FROM stock_lot_returns rt JOIN root r ON r.id = rt.lot_id JOIN sales_returns sr ON sr.id = rt.return_id WHERE r.pl = pl.id AND sr.status = 'POSTED'), 0)::text AS returned
+      FROM purchase_lines pl JOIN purchase_orders po ON po.id = pl.purchase_id JOIN contacts c ON c.id = po.supplier_id JOIN products p ON p.id = pl.product_id
+      WHERE pl.profit_class = 'USED' AND po.status = 'POSTED' AND (${f.from ? `po.doc_date >= '${f.from.replace(/'/g, "")}'` : "true"}) AND (${f.to ? `po.doc_date <= '${f.to.replace(/'/g, "")}'` : "true"})
+        AND (${f.partyId ? `po.supplier_id = '${f.partyId.replace(/'/g, "")}'` : "true"}) AND (${f.productId ? `pl.product_id = '${f.productId.replace(/'/g, "")}'` : "true"}) ORDER BY po.doc_date, po.doc_no, pl.line_no`);
+    const out: Row[] = rows.map((r: any) => ({ supplier: r.supplier, poNo: r.doc_no, poLink: `/purchases/${r.poid}`, poDate: r.pdate, product: `${r.code} — ${r.pname}`, qty: r.qty, cost: r.cost, currency: "IQD", locs: r.locs, sold: r.sold, returned: r.returned, remaining: r.remaining }));
+    return { columns: [{ key: "supplier", label: "المورد" }, { key: "poNo", label: "فاتورة الشراء", href: "poLink" }, { key: "poDate", label: "تاريخ الشراء" }, { key: "product", label: "المادة" }, { key: "qty", label: "الكمية المشتراة", kind: "qty" }, { key: "cost", label: "كلفة الشراء (IQD)", kind: "money", cur: "IQD" }, { key: "locs", label: "الموقع (المتبقي)" }, { key: "sold", label: "المباع", kind: "qty" }, { key: "returned", label: "المرتجع", kind: "qty" }, { key: "remaining", label: "المتبقي", kind: "qty" }],
+      rows: out, totals: out.length ? [{ supplier: "الإجمالي", currency: "IQD", cost: sum(out, "cost").toString() }] : [], notes: ["الكميات بوحدة المادة الأساسية", "الربط عبر الطبقات الفعلية، ويبقى التصنيف مع الطبقة عند التحويل"] };
+  } };
+
+const outsideSales: Def = { id: "outside-sales", title: "مبيعات «الربح خارج التوزيع» وتحصيلها", basis: "period", filters: ["from", "to", "partyId", "productId"],
+  definition: "لكل بند بيع من دفعات «الربح خارج التوزيع» وكل طبقة سُحب منها (FIFO): العميل والفاتورة، المورد وفاتورة الشراء، سعر البيع الحقيقي والخصم وصافي المبيعات، الكلفة الفعلية، الربح/الخسارة. وعلى مستوى الفاتورة: ما سدده العميل، المتبقي، الداخل للصندوق، المستلم خارج الصندوق. «من/إلى» على تاريخ فاتورة البيع. أعمدة الفاتورة تتكرر على صفوفها ولا تُجمع مرتين (الإجمالي على الفواتير المميزة). الربح هنا تجاري ومستبعد من الشراكة.",
+  async run(tx, f) {
+    const q = (v: string | undefined, c: string) => (v ? `${c} = '${v.replace(/'/g, "")}'` : "true");
+    const rows = await tx.unsafe(`${ROOT_LOTS}
+      SELECT si.id AS iid, si.doc_no AS ino, si.doc_date::text AS idate, si.currency, c.name AS customer, sl.id AS slid, p.code, p.name AS pname, sl.qty_base::text AS lq, sl.unit_price::text AS uprice,
+        sl.line_total::text AS lgross, sl.net_line_orig::text AS lnet, sl.net_line_base::text AS lnetb, cn.qty::text AS cq, cn.cost_base::text AS ccost, po.id AS poid, po.doc_no AS pono, sup.name AS supplier,
+        COALESCE((SELECT sum(rt.qty) FROM stock_lot_returns rt JOIN sales_returns sr ON sr.id = rt.return_id WHERE rt.delivery_line_id = dl.id AND rt.lot_id = cn.lot_id AND sr.status = 'POSTED'), 0)::text AS rq,
+        COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id WHERE a.invoice_id = si.id AND r.status = 'POSTED' AND NOT a.external), 0)::text AS inbox,
+        COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id WHERE a.invoice_id = si.id AND r.status = 'POSTED' AND a.external AND a.external_kind = 'OUTSIDE_MARGIN'), 0)::text AS outside,
+        COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id WHERE a.invoice_id = si.id AND r.status = 'POSTED' AND a.external AND a.external_kind = 'PROFIT_SHARE'), 0)::text AS shared,
+        COALESCE((SELECT sum(applied_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED'), 0)::text AS applied, si.net::text AS inet, sl.qty_base AS lqty,
+        (SELECT string_agg(r.doc_no, '، ' ORDER BY r.doc_date) FROM customer_receipts r WHERE r.status = 'POSTED' AND EXISTS (SELECT 1 FROM receipt_allocations a WHERE a.receipt_id = r.id AND a.invoice_id = si.id)) AS receipts
+      FROM sales_lines sl JOIN sales_invoices si ON si.id = sl.invoice_id JOIN contacts c ON c.id = si.customer_id JOIN products p ON p.id = sl.product_id
+        JOIN delivery_lines dl ON dl.sales_line_id = sl.id JOIN delivery_notes dn ON dn.id = dl.delivery_id AND dn.status = 'POSTED'
+        JOIN stock_lot_consumptions cn ON cn.doc_line_id = dl.id AND cn.doc_type = 'delivery_note' JOIN root rt ON rt.id = cn.lot_id
+        LEFT JOIN purchase_lines pl ON pl.id = rt.pl LEFT JOIN purchase_orders po ON po.id = pl.purchase_id LEFT JOIN contacts sup ON sup.id = po.supplier_id
+      WHERE sl.profit_class = 'USED' AND si.status = 'POSTED' AND ${f.from ? `si.doc_date >= '${f.from.replace(/'/g, "")}'` : "true"} AND ${f.to ? `si.doc_date <= '${f.to.replace(/'/g, "")}'` : "true"}
+        AND ${q(f.partyId, "si.customer_id")} AND ${q(f.productId, "sl.product_id")} ORDER BY si.doc_date, si.doc_no, sl.line_no`);
+    const out: Row[] = []; const seen = new Set<string>();
+    const tot = new Map<string, { net: ReturnType<typeof d>; cost: ReturnType<typeof d>; profit: ReturnType<typeof d>; paid: ReturnType<typeof d>; rem: ReturnType<typeof d>; box: ReturnType<typeof d>; outside: ReturnType<typeof d> }>();
+    for (const r of rows as any[]) {
+      const share = d(r.cq).div(r.lqty), cur = r.currency as string, places = cur === "USD" ? 4 : 4;
+      const grossS = d(r.lgross).mul(share).toDecimalPlaces(places), netS = d(r.lnet).mul(share).toDecimalPlaces(places), netB = d(r.lnetb).mul(share);
+      const cost = d(r.ccost), profit = netB.minus(cost), discS = grossS.minus(netS);
+      const paid = d(r.inbox).plus(r.outside).plus(r.shared), remaining = d(r.inet).minus(paid).minus(r.applied);
+      out.push({ customer: r.customer, invoiceNo: r.ino, invoiceLink: `/sales/${r.iid}`, invoiceDate: r.idate, supplier: r.supplier ?? "—", purchaseNo: r.pono ?? "—", purchaseLink: r.poid ? `/purchases/${r.poid}` : null, product: `${r.code} — ${r.pname}`,
+        qty: r.cq, returned: r.rq, unitPrice: r.uprice, gross: grossS.toString(), discount: discS.toString(), net: netS.toString(), cost: cost.toString(), profit: profit.toString(), currency: cur,
+        paid: paid.toString(), remaining: Decimal0(remaining).toString(), box: r.inbox, outside: r.outside, receipts: r.receipts ?? "—" });
+      const t = tot.get(cur) ?? { net: d(0), cost: d(0), profit: d(0), paid: d(0), rem: d(0), box: d(0), outside: d(0) };
+      t.net = t.net.plus(netS); t.cost = t.cost.plus(cost); t.profit = t.profit.plus(profit);
+      if (!seen.has(r.iid)) { seen.add(r.iid); t.paid = t.paid.plus(paid); t.rem = t.rem.plus(Decimal0(remaining)); t.box = t.box.plus(r.inbox); t.outside = t.outside.plus(r.outside); }
+      tot.set(cur, t);
+    }
+    const totals: Row[] = [...tot].map(([cur, t]) => ({ customer: `الإجمالي ${cur} (الفواتير مرة واحدة)`, currency: cur, net: t.net.toString(), cost: t.cost.toString(), profit: t.profit.toString(), paid: t.paid.toString(), remaining: t.rem.toString(), box: t.box.toString(), outside: t.outside.toString() }));
+    return { columns: [{ key: "customer", label: "العميل" }, { key: "invoiceNo", label: "فاتورة البيع", href: "invoiceLink" }, { key: "invoiceDate", label: "تاريخ البيع" }, { key: "supplier", label: "المورد" }, { key: "purchaseNo", label: "فاتورة الشراء", href: "purchaseLink" }, { key: "product", label: "المادة" },
+      { key: "qty", label: "الكمية (من هذه الدفعة)", kind: "qty" }, { key: "returned", label: "المرتجع", kind: "qty" }, { key: "unitPrice", label: "سعر البيع", kind: "money" }, { key: "gross", label: "قبل الخصم", kind: "money" }, { key: "discount", label: "الخصم", kind: "money" }, { key: "net", label: "صافي المبيعات", kind: "money" },
+      { key: "cost", label: "الكلفة الفعلية (IQD)", kind: "money", cur: "IQD" }, { key: "profit", label: "الربح/الخسارة (IQD)", kind: "money", cur: "IQD" },
+      { key: "paid", label: "سدده العميل (للفاتورة)", kind: "money" }, { key: "remaining", label: "المتبقي (للفاتورة)", kind: "money" }, { key: "box", label: "دخل الصندوق (للفاتورة)", kind: "money" }, { key: "outside", label: "المستلم خارج الصندوق (للفاتورة)", kind: "money" }, { key: "receipts", label: "سندات القبض" }],
+      rows: out, totals, notes: ["الربح تجاري ومستبعد من توزيع الشراكة ولا ينشئ حصة لأحد", "المبالغ بعملة الفاتورة؛ الكلفة والربح بالدينار", "ما دخل الصندوق وما استُلم خارجه وما بقي ذمة ثلاثة أرقام مستقلة"] };
+  } };
+
+export const REPORTS: Def[] = [outsideBatches, outsideSales, profits, trial, ledger, pnl, bs, statement("customer"), statement("supplier"), inventory, cashMv];
 export const reportById = (id: string) => REPORTS.find((r) => r.id === id);

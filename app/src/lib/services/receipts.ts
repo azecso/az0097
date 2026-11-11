@@ -33,7 +33,7 @@ export async function customerCredit(tx: Tx, customerId: string) {
 export const receiptSchema = z.object({
   customerId: uuid, docDate: dateStr, kind: z.enum(["CASH", "CREDIT_APPLICATION"]).default("CASH"), cashAccountId: uuid.nullish(), currency: currencyCode, exchangeRate: rateStr.nullish(), settlementRate: rateStr.nullish(),
   amount: moneyStr, notes: z.string().max(500).nullish(),
-  allocations: z.array(z.object({ invoiceId: uuid, amount: moneyStr, externalAmount: moneyStr.default("0"), externalNote: z.string().max(300).nullish() })).max(100).default([]),
+  allocations: z.array(z.object({ invoiceId: uuid, amount: moneyStr, externalAmount: moneyStr.default("0"), externalNote: z.string().max(300).nullish(), externalKind: z.enum(["PROFIT_SHARE", "OUTSIDE_MARGIN"]).default("PROFIT_SHARE") })).max(100).default([]),
 });
 
 /**
@@ -50,7 +50,8 @@ const lowerBound = (amount: Decimal.Value, from: string, to: string, rate: Decim
 
 async function validate(tx: Tx, i: z.infer<typeof receiptSchema>, who: Principal) {
   const amount = d(i.amount);
-  if (amount.lte(0)) throw badRequest("INVALID_AMOUNT");
+  const onlyOutside = i.kind === "CASH" && i.allocations.some((a) => d(a.externalAmount ?? "0").gt(0) && a.externalKind === "OUTSIDE_MARGIN");
+  if (amount.lt(0) || (amount.isZero() && !onlyOutside)) throw badRequest("INVALID_AMOUNT");   // all of it may be received outside the cash box (amount 0) only through the outside-margin kind
   const [c] = await tx`SELECT kind FROM contacts WHERE id = ${i.customerId}`;
   if (!c || c.kind === "SUPPLIER") throw badRequest("NOT_A_CUSTOMER");
   if (i.kind === "CASH") {
@@ -70,13 +71,19 @@ async function validate(tx: Tx, i: z.infer<typeof receiptSchema>, who: Principal
     const [inv] = await tx`SELECT customer_id, status, currency FROM sales_invoices WHERE id = ${a.invoiceId}`;
     if (!inv || inv.customer_id !== i.customerId || inv.status !== "POSTED") throw badRequest("BAD_ALLOCATION", "التخصيص على فاتورة مرحّلة لنفس العميل فقط");
     const ext = d(a.externalAmount ?? "0");
-    if (ext.gt(0)) {                                              // profit already distributed outside the system: owner only, cash receipts in dinar only
+    if (ext.gt(0) && a.externalKind === "OUTSIDE_MARGIN") {       // margin above cost received OUTSIDE the cash box on price-variable goods: bounded by the margin those lines actually earned
+      if (i.kind !== "CASH") throw badRequest("OUTSIDE_MARGIN_CASH_ONLY", "الفرق خارج الصندوق يُسجَّل في قبض نقدي");
+      const prof = await invoiceProfit(tx, a.invoiceId), fin0 = await invoiceFinancials(tx, a.invoiceId);
+      const [fx] = await tx`SELECT exchange_rate_snapshot::text AS fx, currency FROM sales_invoices WHERE id = ${a.invoiceId}`;
+      const extBase = toBase(ext, fx!.fx as string, fx!.currency as string), room = Decimal.max(d(prof.usedProfitBase), 0).minus(toBase(fin0.outside, fx!.fx as string, fx!.currency as string));
+      if (extBase.gt(room.plus(1))) throw conflict("OUTSIDE_EXCEEDS_MARGIN", `الفرق خارج الصندوق (${extBase} د.ع) يتجاوز هامش البنود خارج التوزيع المتاح (${Decimal.max(room, 0)} د.ع): لا يُسجَّل مبلغ لم يتحقق ربحاً`);
+    } else if (ext.gt(0)) {                                       // profit already distributed outside the system: owner only, cash receipts in dinar only
       if (!who.isOwner) throw badRequest("EXTERNAL_PROFIT_OWNER_ONLY", "تسجيل الربح الموزَّع خارج النظام للمالك فقط");
       if (i.kind !== "CASH" || i.currency !== "IQD" || cross) throw badRequest("EXTERNAL_PROFIT_IQD_CASH_ONLY", "الربح الخارجي يُسجَّل في سند قبض نقدي بالدينار فقط");
     }
-    if (ext.gt(0)) {                                              // "outside-distributed profit" is a NON-cash settlement of the receivable that stands for profit the partners already took: it can never exceed the profit the invoice has earned
+    if (ext.gt(0) && a.externalKind !== "OUTSIDE_MARGIN") {       // "outside-distributed profit" is a NON-cash settlement of the receivable that stands for profit the partners already took: it can never exceed the profit the invoice has earned
       const prof = await invoiceProfit(tx, a.invoiceId), fin0 = await invoiceFinancials(tx, a.invoiceId);
-      if (ext.plus(fin0.external).gt(Decimal.max(d(prof.adjustedProfitBase), 0))) throw conflict("EXTERNAL_EXCEEDS_PROFIT", `الربح الخارجي (${ext.plus(fin0.external)}) يتجاوز ربح الفاتورة المتحقق من البضاعة المسلَّمة (${prof.adjustedProfitBase})`);
+      if (ext.plus(fin0.externalShare).gt(Decimal.max(d(prof.adjustedProfitBase), 0))) throw conflict("EXTERNAL_EXCEEDS_PROFIT", `الربح الخارجي (${ext.plus(fin0.externalShare)}) يتجاوز ربح الفاتورة المتحقق من البضاعة المسلَّمة (${prof.adjustedProfitBase})`);
     }
     if (d(a.amount).lte(0) && ext.lte(0)) throw badRequest("EMPTY_ALLOCATION", "حدّد مبلغاً مستحصلاً أو ربحاً خارجياً للفاتورة");
     if (d(a.amount).plus(ext).gt((await invoiceFinancials(tx, a.invoiceId)).outstanding)) throw conflict("OVER_ALLOCATION", "المبلغ المخصص (المستحصل + الخارجي) يتجاوز المتبقي على الفاتورة");
@@ -89,11 +96,11 @@ async function validate(tx: Tx, i: z.infer<typeof receiptSchema>, who: Principal
   }
 }
 
-async function writeAllocs(tx: Tx, companyId: string, id: string, allocs: { invoiceId: string; amount: string; externalAmount?: string; externalNote?: string | null }[]) {
+async function writeAllocs(tx: Tx, companyId: string, id: string, allocs: { invoiceId: string; amount: string; externalAmount?: string; externalNote?: string | null; externalKind?: string }[]) {
   await tx`DELETE FROM receipt_allocations WHERE receipt_id = ${id}`;
   for (const a of allocs) {
     if (d(a.amount).gt(0)) await tx`INSERT INTO receipt_allocations(company_id, receipt_id, invoice_id, amount) VALUES (${companyId}, ${id}, ${a.invoiceId}, ${a.amount})`;
-    if (d(a.externalAmount ?? "0").gt(0)) await tx`INSERT INTO receipt_allocations(company_id, receipt_id, invoice_id, amount, external, note) VALUES (${companyId}, ${id}, ${a.invoiceId}, ${a.externalAmount!}, true, ${(a.externalNote ?? "").trim() || "ربح موزَّع خارج النظام"})`;
+    if (d(a.externalAmount ?? "0").gt(0)) await tx`INSERT INTO receipt_allocations(company_id, receipt_id, invoice_id, amount, external, note, external_kind) VALUES (${companyId}, ${id}, ${a.invoiceId}, ${a.externalAmount!}, true, ${(a.externalNote ?? "").trim() || (a.externalKind === "OUTSIDE_MARGIN" ? "فرق ربح مستلم خارج الصندوق" : "ربح موزَّع خارج النظام")}, ${a.externalKind ?? "PROFIT_SHARE"})`;
   }
 }
 
@@ -129,10 +136,10 @@ export async function postReceipt(tx: Tx, who: Principal, actor: Actor, id: stri
   const [r] = await tx`SELECT * FROM customer_receipts WHERE id = ${id} FOR UPDATE`;
   if (!r) throw notFound();
   if (r.status !== "DRAFT") throw conflict("NOT_DRAFT");
-  const allRows = await tx`SELECT a.invoice_id, a.amount::text AS amount, a.external, a.note, si.exchange_rate_snapshot::text AS fx, si.currency AS inv_cur FROM receipt_allocations a JOIN sales_invoices si ON si.id = a.invoice_id WHERE a.receipt_id = ${id}`;
+  const allRows = await tx`SELECT a.invoice_id, a.amount::text AS amount, a.external, a.note, a.external_kind AS kind, si.exchange_rate_snapshot::text AS fx, si.currency AS inv_cur FROM receipt_allocations a JOIN sales_invoices si ON si.id = a.invoice_id WHERE a.receipt_id = ${id}`;
   const allocs = allRows.filter((a) => !a.external), extRows = allRows.filter((a) => a.external);
-  const byInv = new Map<string, { invoiceId: string; amount: string; externalAmount: string; externalNote: string | null }>();
-  for (const a of allRows) { const e = byInv.get(a.invoice_id as string) ?? { invoiceId: a.invoice_id as string, amount: "0", externalAmount: "0", externalNote: null }; if (a.external) { e.externalAmount = a.amount as string; e.externalNote = a.note as string | null; } else e.amount = a.amount as string; byInv.set(a.invoice_id as string, e); }
+  const byInv = new Map<string, { invoiceId: string; amount: string; externalAmount: string; externalNote: string | null; externalKind: string }>();
+  for (const a of allRows) { const e = byInv.get(a.invoice_id as string) ?? { invoiceId: a.invoice_id as string, amount: "0", externalAmount: "0", externalNote: null, externalKind: "PROFIT_SHARE" }; if (a.external) { e.externalAmount = a.amount as string; e.externalNote = a.note as string | null; e.externalKind = a.kind as string; } else e.amount = a.amount as string; byInv.set(a.invoice_id as string, e); }
   await validate(tx, { customerId: r.customer_id, docDate: dateOf(r.doc_date), kind: r.kind, cashAccountId: r.cash_account_id, currency: r.currency, amount: r.amount, settlementRate: r.settlement_rate as string | null, allocations: [...byInv.values()] } as z.infer<typeof receiptSchema>, who);
   const date = dateOf(r.doc_date), fx = r.exchange_rate_snapshot as string, cur = r.currency as string;
   const docNo = (r.doc_no as string | null) ?? (await tx`SELECT next_document_number(${who.companyId}, 'customer_receipt', ${yearOf(date)}) AS n`)[0]!.n as string;   // an amended receipt keeps its number
@@ -150,14 +157,19 @@ export async function postReceipt(tx: Tx, who: Principal, actor: Actor, id: stri
     if (creditBase.gt(0)) jl.push({ account: "2400", credit: creditBase, currency: cur, amountOrig: rest, fx, contactId: r.customer_id });
     if (fxDiff.gt(0)) jl.push({ account: "7100", credit: fxDiff, memo: "ربح فرق صرف محقق" });
     if (fxDiff.lt(0)) jl.push({ account: "7100", debit: fxDiff.abs(), memo: "خسارة فرق صرف محققة" });
-    const ext = extRows.reduce<Decimal>((s, a) => s.plus(a.amount as string), d(0));                              // profit already distributed outside: no cash, AR cleared, split 50/50 to the two partners
+    const ext = extRows.filter((a) => a.kind !== "OUTSIDE_MARGIN").reduce<Decimal>((s, a) => s.plus(a.amount as string), d(0));      // profit already distributed outside: no cash, AR cleared, split 50/50 to the two partners
     if (ext.gt(0)) {
       const sh = split5050(ext, "IQD"); const [own] = await tx`SELECT id FROM partners WHERE kind = 'OWNER'`; const [par] = await tx`SELECT id FROM partners WHERE kind = 'PARTNER'`;
       jl.push({ account: "1200", credit: ext, currency: cur, amountOrig: ext, fx: 1, contactId: r.customer_id, memo: "ربح موزَّع خارج النظام" });
       if (sh.owner.gt(0)) jl.push({ account: "3500", debit: sh.owner, partnerId: own!.id, memo: "حصة المالك من ربح موزَّع خارج النظام" });
       if (sh.partner.gt(0)) jl.push({ account: "3500", debit: sh.partner, partnerId: par!.id, memo: "حصة الشريك من ربح موزَّع خارج النظام" });
     }
-    await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id) VALUES (${who.companyId}, ${ca!.id}, ${r.amount}, ${cashBase.toString()}, 'customer_receipt', ${id})`;
+    for (const o of extRows.filter((a) => a.kind === "OUTSIDE_MARGIN")) {                  // margin above cost received outside the cash box: non-cash settlement of the receivable, no partner share, not an expense
+      const ob = toBase(o.amount, o.fx, invCur);
+      jl.push({ account: "1200", credit: ob, currency: invCur, amountOrig: o.amount, fx: o.fx, contactId: r.customer_id, memo: "فرق ربح مستلم خارج الصندوق" });
+      jl.push({ account: "3600", debit: ob, currency: invCur, amountOrig: o.amount, fx: o.fx, memo: "فرق ربح مستلم خارج الصندوق (خارج الشراكة)" });
+    }
+    if (d(r.amount).gt(0)) await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id) VALUES (${who.companyId}, ${ca!.id}, ${r.amount}, ${cashBase.toString()}, 'customer_receipt', ${id})`;
   } else {
     const avail = await customerCreditIn(tx, r.customer_id, cur);
     if (d(allocated).gt(avail.orig)) throw conflict("INSUFFICIENT_CREDIT", `الرصيد الدائن للعميل بعملة ${cur} لا يكفي (المتاح ${avail.orig})`);
@@ -328,6 +340,8 @@ export async function getCashTransfer(tx: Tx, id: string) {
 export const collectSchema = z.object({
   requestId: z.string().min(8).max(120), docDate: dateStr, cashAccountId: uuid, currency: currencyCode, exchangeRate: rateStr.nullish(), settlementRate: rateStr.nullish(),
   amount: moneyStr, externalAmount: moneyStr.default("0"), externalNote: z.string().max(300).nullish(), notes: z.string().max(500).nullish(),
+  /** margin above cost received OUTSIDE the cash box (invoice currency) for goods whose profit is excluded from the partnership. `amount` is then only what entered the box (may be 0). */
+  outsideAmount: moneyStr.default("0"),
 });
 /**
  * Create + post the receipt allocated to THIS invoice in one transaction. Same invoice, same customer, remaining pre-checked by the receipt validation.
@@ -345,10 +359,13 @@ export async function collectOnInvoice(tx: Tx, who: Principal, actor: Actor, inv
     const received = d(i.amount); const same = inv.currency === i.currency;
     if (!same && !i.settlementRate) throw badRequest("SETTLEMENT_RATE_REQUIRED", `الفاتورة بعملة ${inv.currency} والقبض بعملة ${i.currency}: أدخل سعر التحويل صراحةً`);
     const settled = same ? received : convertSettlement(received, i.currency, inv.currency as string, i.settlementRate!);
-    const ext = d(i.externalAmount ?? "0");
+    const outside = d(i.outsideAmount ?? "0");
+    if (outside.gt(0) && d(i.externalAmount ?? "0").gt(0)) throw badRequest("ONE_EXTERNAL_KIND", "اختر نوعاً واحداً: ربح موزَّع خارج النظام أو فرق ربح خارج الصندوق");
+    if (received.isZero() && outside.lte(0)) throw badRequest("INVALID_AMOUNT");
+    const ext = outside.gt(0) ? outside : d(i.externalAmount ?? "0");
     const applied = Decimal.min(settled, outstanding.minus(ext));                                 // never above what is still owed
     const rec = await createReceipt(tx, who, actor, { customerId: inv.customer_id as string, docDate: i.docDate, kind: "CASH", cashAccountId: i.cashAccountId, currency: i.currency, exchangeRate: i.exchangeRate, settlementRate: same ? null : i.settlementRate,
-      amount: i.amount, notes: i.notes ?? null, allocations: [{ invoiceId, amount: applied.toString(), externalAmount: i.externalAmount ?? "0", externalNote: i.externalNote ?? null }] });
+      amount: i.amount, notes: i.notes ?? null, allocations: [{ invoiceId, amount: applied.toString(), externalAmount: ext.toString(), externalNote: i.externalNote ?? null, externalKind: outside.gt(0) ? "OUTSIDE_MARGIN" : "PROFIT_SHARE" }] });
     const posted = await postReceipt(tx, who, actor, rec.id as string);
     const after = await invoiceFinancials(tx, invoiceId);
     return { receiptId: rec.id as string, docNo: posted.docNo as string, applied: applied.toString(), surplusToCredit: settled.gt(applied) ? settled.minus(applied).toString() : "0", outstanding: after.outstanding, status: d(after.outstanding).isZero() ? "PAID" : "PARTIAL" };

@@ -1,5 +1,5 @@
 /** Shared by the report screen and its print page: ONE formatting rule (IQD no decimals, USD two, quantities trimmed, percentages as %). Values stay exact decimal strings. */
-export interface RCol { key: string; label: string; kind?: "text" | "money" | "qty" | "pct"; href?: string }
+export interface RCol { key: string; label: string; kind?: "text" | "money" | "qty" | "pct"; href?: string; cur?: string }
 export interface RResult { id: string; title: string; basis: string; definition: string; filters: Record<string, string>; filterKeys: string[]; columns: RCol[]; rows: Record<string, string | null>[]; totals: Record<string, string | null>[]; notes: string[] }
 const group = (i: string) => i.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 function fixed(v: string, places: number) {                         // exact string rounding (half up) — no JS Number involved
@@ -11,7 +11,7 @@ function fixed(v: string, places: number) {                         // exact str
 }
 export function fmtCell(row: Record<string, string | null>, c: RCol): string {
   const v = row[c.key]; if (v === null || v === undefined || v === "") return "";
-  if (c.kind === "money") return fixed(v, row.currency === "USD" ? 2 : 0);
+  if (c.kind === "money") return fixed(v, (c.cur ?? row.currency) === "USD" ? 2 : 0);
   if (c.kind === "qty") { const [i = "0", f = ""] = v.split("."); const t = f.replace(/0+$/, ""); return group(i.replace(/^-0$/, "0")) + (t ? "." + t : ""); }
   if (c.kind === "pct") return fixed(v, 2) + "%";
   return v;

@@ -175,7 +175,7 @@ export async function externalProfitReport(tx: Tx, f: { from?: string; to?: stri
   const rows = await tx`SELECT cr.doc_no AS "receiptNo", cr.doc_date::text AS date, c.name AS customer, si.doc_no AS "invoiceNo", si.net::text AS "invoiceNet",
       COALESCE((SELECT sum(a2.amount) FROM receipt_allocations a2 WHERE a2.receipt_id = cr.id AND a2.invoice_id = si.id AND NOT a2.external), 0)::text AS cash, a.amount::text AS external, a.note
     FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id JOIN sales_invoices si ON si.id = a.invoice_id JOIN contacts c ON c.id = cr.customer_id
-    WHERE a.external AND cr.status = 'POSTED' AND (${f.from ?? null}::date IS NULL OR cr.doc_date >= ${f.from ?? null}::date) AND (${f.to ?? null}::date IS NULL OR cr.doc_date <= ${f.to ?? null}::date)
+    WHERE a.external AND a.external_kind = 'PROFIT_SHARE' AND cr.status = 'POSTED' AND (${f.from ?? null}::date IS NULL OR cr.doc_date >= ${f.from ?? null}::date) AND (${f.to ?? null}::date IS NULL OR cr.doc_date <= ${f.to ?? null}::date)
       AND (${f.partyId ?? null}::uuid IS NULL OR cr.customer_id = ${f.partyId ?? null}::uuid) ORDER BY cr.doc_date DESC, cr.doc_no DESC`;
   const t = dec(rows as never, ["cash", "external"]); const half = d(t.external!).div(2).toDecimalPlaces(0, Decimal.ROUND_DOWN);
   return { rows, totals: { cash: t.cash, external: t.external, perPartner: half.toString(), count: rows.length } };

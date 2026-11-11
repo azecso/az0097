@@ -21,13 +21,14 @@ export async function invoiceFinancials(tx: Tx, invoiceId: string, asOf: string 
   const [r] = await tx`SELECT si.net::text AS net, si.currency, si.sale_type,
       COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED' AND cr.doc_date <= ${asOf} AND NOT a.external), 0)::text AS collected,
       COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED' AND cr.doc_date <= ${asOf} AND a.external), 0)::text AS external,
+      COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED' AND cr.doc_date <= ${asOf} AND a.external AND a.external_kind = 'OUTSIDE_MARGIN'), 0)::text AS outside,
       COALESCE((SELECT sum(value_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED' AND doc_date <= ${asOf}), 0)::text AS returned,
       COALESCE((SELECT sum(applied_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED' AND doc_date <= ${asOf}), 0)::text AS applied,
       COALESCE((SELECT sum(refund_orig) FROM sales_returns WHERE invoice_id = si.id AND status = 'POSTED' AND doc_date <= ${asOf}), 0)::text AS refunds
     FROM sales_invoices si WHERE si.id = ${invoiceId}`;
   if (!r) throw notFound();
   const outstanding = Decimal.max(d(r.net).minus(r.collected).minus(r.external).minus(r.applied), 0);
-  return { net: r.net as string, currency: r.currency as string, collected: r.collected as string, external: r.external as string, returned: r.returned as string, appliedToReceivable: r.applied as string,
+  return { net: r.net as string, currency: r.currency as string, collected: r.collected as string, external: r.external as string, outside: r.outside as string, externalShare: d(r.external).minus(r.outside).toString(), returned: r.returned as string, appliedToReceivable: r.applied as string,
     cashRefunds: r.refunds as string, adjustedNet: d(r.net).minus(r.returned).toString(), netCollected: d(r.collected).plus(r.external).minus(r.refunds).toString(), outstanding: outstanding.toString() };
 }
 
@@ -38,7 +39,7 @@ export async function invoiceFinancials(tx: Tx, invoiceId: string, asOf: string 
  *  - it is a RESTRICTION indicator for distributing profit, not new accounting profit. Zero/negative earned value => 0.
  */
 export async function invoiceProfit(tx: Tx, invoiceId: string, asOf: string = FOREVER) {
-  const zero = { grossProfitBase: "0", adjustedProfitBase: "0", collectedRatio: "0", linkedProfitBase: "0", deliveredRatio: "0", recognizedNetBase: "0", recognizedNetOrig: "0", cogsBase: "0", usedProfitBase: "0" };
+  const zero = { grossProfitBase: "0", adjustedProfitBase: "0", collectedRatio: "0", linkedProfitBase: "0", deliveredRatio: "0", recognizedNetBase: "0", recognizedNetOrig: "0", cogsBase: "0", usedProfitBase: "0", usedNetOrig: "0", usedCostBase: "0" };
   if ((await tx`SELECT is_opening FROM sales_invoices WHERE id = ${invoiceId}`)[0]?.is_opening) return zero;   // opening balances carry no profit
   const fin = await invoiceFinancials(tx, invoiceId, asOf);
   // per line: delivered share, cost of what was delivered, returns — so USED lines can be kept out of the partnership profit while everything else stays in the books
@@ -46,14 +47,15 @@ export async function invoiceProfit(tx: Tx, invoiceId: string, asOf: string = FO
       COALESCE((SELECT sum(dl.qty_base) FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id WHERE dl.sales_line_id = sl.id AND dn.status = 'POSTED' AND dn.doc_date <= ${asOf}), 0)::text AS dq,
       COALESCE((SELECT sum(dl.cost_base) FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id WHERE dl.sales_line_id = sl.id AND dn.status = 'POSTED' AND dn.doc_date <= ${asOf}), 0)::text AS cogs,
       COALESCE((SELECT sum(rl.value_base) FROM sales_return_lines rl JOIN sales_returns r ON r.id = rl.return_id WHERE rl.sales_line_id = sl.id AND r.status = 'POSTED' AND r.doc_date <= ${asOf}), 0)::text AS rv,
-      COALESCE((SELECT sum(rl.cost_base) FROM sales_return_lines rl JOIN sales_returns r ON r.id = rl.return_id WHERE rl.sales_line_id = sl.id AND r.status = 'POSTED' AND r.doc_date <= ${asOf}), 0)::text AS rc
+      COALESCE((SELECT sum(rl.cost_base) FROM sales_return_lines rl JOIN sales_returns r ON r.id = rl.return_id WHERE rl.sales_line_id = sl.id AND r.status = 'POSTED' AND r.doc_date <= ${asOf}), 0)::text AS rc,
+      COALESCE((SELECT sum(rl.value_orig) FROM sales_return_lines rl JOIN sales_returns r ON r.id = rl.return_id WHERE rl.sales_line_id = sl.id AND r.status = 'POSTED' AND r.doc_date <= ${asOf}), 0)::text AS rvo
     FROM sales_lines sl WHERE sl.invoice_id = ${invoiceId}`;
-  let recB = d(0), recO = d(0), cogs = d(0), qAll = d(0), qDel = d(0), retB = d(0), retC = d(0), usedProfit = d(0);
+  let recB = d(0), recO = d(0), cogs = d(0), qAll = d(0), qDel = d(0), retB = d(0), retC = d(0), usedProfit = d(0), usedNetO = d(0), usedCost = d(0);
   for (const l of lines) {
     const full = d(l.dq).gte(l.q);
     const rb = full ? d(l.nb) : roundMoney(d(l.nb).mul(l.dq).div(l.q), "IQD"), ro = full ? d(l.no) : d(l.no).mul(l.dq).div(l.q);
     qAll = qAll.plus(l.q); qDel = qDel.plus(l.dq); recO = recO.plus(ro);                       // the invoice as a whole (payment test) includes every line
-    if (l.cls === "USED") { usedProfit = usedProfit.plus(rb.minus(l.rv)).minus(d(l.cogs).minus(l.rc)); continue; }       // used goods: profit stays in the accounts, out of the partnership
+    if (l.cls === "USED") { usedProfit = usedProfit.plus(rb.minus(l.rv)).minus(d(l.cogs).minus(l.rc)); usedNetO = usedNetO.plus(ro).minus(l.rvo); usedCost = usedCost.plus(l.cogs).minus(l.rc); continue; }       // used goods: profit stays in the accounts, out of the partnership
     recB = recB.plus(rb); cogs = cogs.plus(l.cogs); retB = retB.plus(l.rv); retC = retC.plus(l.rc);
   }
   const adjRecB = recB.minus(retB), adjCogs = cogs.minus(retC), adjRecO = recO.minus(fin.returned);
@@ -63,7 +65,7 @@ export async function invoiceProfit(tx: Tx, invoiceId: string, asOf: string = FO
   const fullyPaid = d(fin.netCollected).gte(adjRecO) && adjRecO.gt(0);
   const ratio = fullyDelivered && fullyPaid ? d(1) : d(0);
   return { grossProfitBase: grossProfit.toString(), adjustedProfitBase: adjustedProfit.toString(), collectedRatio: ratio.toDecimalPlaces(8).toString(), linkedProfitBase: roundMoney(adjustedProfit.mul(ratio), "IQD").toString(),
-    deliveredRatio: qAll.gt(0) ? qDel.div(qAll).toDecimalPlaces(8).toString() : "0", recognizedNetBase: adjRecB.toString(), recognizedNetOrig: adjRecO.toDecimalPlaces(4).toString(), cogsBase: adjCogs.toString(), usedProfitBase: usedProfit.toString() };
+    deliveredRatio: qAll.gt(0) ? qDel.div(qAll).toDecimalPlaces(8).toString() : "0", recognizedNetBase: adjRecB.toString(), recognizedNetOrig: adjRecO.toDecimalPlaces(4).toString(), cogsBase: adjCogs.toString(), usedProfitBase: usedProfit.toString(), usedNetOrig: usedNetO.toDecimalPlaces(4).toString(), usedCostBase: usedCost.toString() };
 }
 
 // =========================== invoices ===========================
@@ -162,13 +164,16 @@ export async function getInvoice(tx: Tx, id: string) {
   const cogs = h.status === "DRAFT" ? null : (await tx`SELECT COALESCE(sum(dl.cost_base), 0)::text AS c FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id JOIN sales_lines sl ON sl.id = dl.sales_line_id WHERE sl.invoice_id = ${id} AND dn.status = 'POSTED'`)[0]!.c;
   const profit = h.status === "DRAFT" ? null : await invoiceProfit(tx, id);
   // invoiced / delivered / collected / remaining, kept apart (policy §2): cash taken for goods not yet delivered is an advance, not earned profit
-  let breakdown: Record<string, string> | null = null;
+  let breakdown: Record<string, unknown> | null = null;
   if (h.status !== "DRAFT" && profit) {
     const f = fin as Awaited<ReturnType<typeof invoiceFinancials>>;
     const delivered = (await tx`SELECT COALESCE(sum(CASE WHEN dq >= q THEN no ELSE no * dq / q END), 0)::text AS v FROM (SELECT sl.qty_base AS q, sl.net_line_orig AS no,
         COALESCE((SELECT sum(dl.qty_base) FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id WHERE dl.sales_line_id = sl.id AND dn.status = 'POSTED'), 0) AS dq FROM sales_lines sl WHERE sl.invoice_id = ${id}) x`)[0]!.v as string;
     const paid = d(f.collected).plus(f.external);
-    breakdown = { invoiced: f.net, deliveredValue: d(delivered).toDecimalPlaces(4).toString(), deliveredRatio: profit.deliveredRatio, collected: f.collected, external: f.external, remaining: f.outstanding,
+    const hasExcluded = lines.some((l: any) => l.profitClass === "USED");
+    const rate = d(h.exchangeRate as string);
+    const outsideInfo = hasExcluded ? { excludedNet: profit.usedNetOrig, excludedCostBase: profit.usedCostBase, excludedCost: roundMoney(d(profit.usedCostBase).div(rate), h.currency as string).toString(), marginBase: profit.usedProfitBase, recordedOutside: f.outside, cashCollected: f.collected } : null;
+    breakdown = { outside: outsideInfo, invoiced: f.net, deliveredValue: d(delivered).toDecimalPlaces(4).toString(), deliveredRatio: profit.deliveredRatio, collected: f.collected, external: f.external, remaining: f.outstanding,
       advanceOnUndelivered: Decimal.max(paid.minus(delivered), 0).toDecimalPlaces(4).toString(), eligibleProfitBase: profit.linkedProfitBase };
   }
   const receipts = h.status === "DRAFT" ? [] : await tx`SELECT r.id, r.doc_no AS "docNo", r.doc_date::text AS "docDate", r.currency, r.settlement_rate::text AS "settlementRate", r.auto_for_invoice_id IS NOT NULL AS auto,

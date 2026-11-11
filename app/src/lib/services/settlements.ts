@@ -49,7 +49,7 @@ export async function computeSettlement(tx: Tx, i: z.infer<typeof settlementInpu
     if (d(p.collectedRatio).isZero() && d(p.adjustedProfitBase).gt(0)) pending = pending.plus(p.adjustedProfitBase);         // earned but not yet fully paid + delivered: shown, never distributable
     const before = d((await tx`SELECT COALESCE(sum(l.newly_released), 0)::text AS v FROM profit_settlement_lines l JOIN profit_settlements s ON s.id = l.settlement_id WHERE l.invoice_id = ${inv.id} AND s.status = 'POSTED'`)[0]!.v);
     // profit already distributed outside the system (receipt "external" allocations) is never distributed again; it counts only up to the cut-off
-    const ext = d((await tx`SELECT COALESCE(sum(a.amount), 0)::text AS v FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = ${inv.id} AND a.external AND cr.status = 'POSTED' AND cr.doc_date <= ${i.periodEnd}`)[0]!.v);
+    const ext = d((await tx`SELECT COALESCE(sum(a.amount), 0)::text AS v FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = ${inv.id} AND a.external AND a.external_kind = 'PROFIT_SHARE' AND cr.status = 'POSTED' AND cr.doc_date <= ${i.periodEnd}`)[0]!.v);
     const linked = d(p.linkedProfitBase), room = Decimal.max(linked.minus(before), 0), newly = linked.minus(before).minus(Decimal.min(ext, room));
     if (newly.isZero()) continue;
     lines.push({ invoiceId: inv.id, docNo: inv.doc_no, adjustedProfit: p.adjustedProfitBase, ratio: p.collectedRatio, linked: linked.toString(), before: before.toString(), newly: newly.toString(), after: before.plus(newly).toString() });
