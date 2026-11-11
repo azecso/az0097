@@ -22,7 +22,7 @@ function Inner() {
     setLines(ex.lines.map((l: any) => ({ productId: l.productId, uom: l.uom, qty: tr(l.qty), unitPrice: tr(l.unitPrice), lineDiscount: tr(l.lineDiscount) === "0" ? "" : tr(l.lineDiscount), locationId: l.locationId ?? "", priceCur: ex.currency }))); }, [ex]);
   const upd = (i: number, k: keyof Line, v: string) => setLines((ls) => ls.map((l, j) => {
     if (j !== i) return l; const nl: Line = { ...l, [k]: v };
-    if (k === "productId") { const p = prods.find((x) => x.id === v); const pc = p?.defaultCurrency ?? "IQD"; nl.uom = p?.baseUom ?? ""; if (p?.defaultSalePrice && pc === cur) { nl.unitPrice = p.defaultSalePrice; nl.priceCur = cur; } else { nl.unitPrice = ""; nl.priceCur = cur; } }
+    if (k === "productId") { const p = prods.find((x) => x.id === v); const pc = p?.defaultCurrency ?? "IQD"; nl.uom = p?.baseUom ?? ""; if (p?.defaultSalePrice && pc === cur) { nl.unitPrice = tr(p.defaultSalePrice); nl.priceCur = cur; } else { nl.unitPrice = ""; nl.priceCur = cur; } }
     if (k === "unitPrice") nl.priceCur = cur;
     return nl; }));
   const [conv, setConv] = useState(""); const stale = lines.map((l) => !!l.unitPrice && !!l.priceCur && l.priceCur !== cur);

@@ -8,7 +8,7 @@ ADMIN="${E2E_ADMIN_URL:?set E2E_ADMIN_URL, e.g. postgres://postgres:postgres@127
 mkdir -p e2e/out e2e/out/uploads
 if curl -fsS "http://localhost:$PORT/api/health" >/dev/null 2>&1; then echo "port $PORT is already in use — stop that server first" >&2; exit 2; fi
 [ -d .next ] || npm run build
-for SC in e2e/0*.cjs; do
+for SC in e2e/[0-9]*.cjs; do
   NAME="$(basename "$SC" .cjs)"; [ -n "$FILTER" ] && [[ "$NAME" != "$FILTER"* ]] && continue
   DB="e2e_$(echo "$NAME" | tr -c 'a-z0-9\n' '_')"
   psql "$ADMIN/postgres" -qAt -c "drop database if exists \"$DB\" with (force)" -c "create database \"$DB\"" >/dev/null 2>&1
