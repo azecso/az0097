@@ -80,3 +80,16 @@ describe("editing a posted receipt keeps its number", () => {
     expect((await w.api(w.owner, w.R.receiptAmend, { method: "POST", params: { id: rc.body.id }, body: { ...mk("600"), version: 1 } })).body.error.code).toBe("VERSION_CONFLICT");
   });
 });
+
+describe("document version history", () => {
+  it("shows the whole chain of edited invoice versions (original, hidden replaced ones, current) and who did what", async () => {
+    const inv = await w.sale({ product: P, qty: "2", price: "1000", date: "2026-04-01", type: "CREDIT" }); let id = inv.id;
+    const g = await w.getInvoice(id); const r1 = await amend(id, body(g, "3", "1000")); expect(r1.status).toBe(200); id = r1.body.id;
+    const g2 = await w.getInvoice(id); const r2 = await amend(id, body(g2, "4", "1000")); expect(r2.status).toBe(200);
+    const hist = await import("@/app/api/document-history/[kind]/[id]/route");
+    const h = (await w.api(w.owner, hist.GET, { params: { kind: "sales-invoices", id: r2.body.id } })).body;
+    expect(h.chain).toHaveLength(3); expect(h.chain.filter((c: any) => c.replaced)).toHaveLength(2); expect(h.chain[2].amendedFrom).toBe(h.chain[1].id);
+    expect(h.events.filter((e: any) => e.action === "sales_invoice.amend")).toHaveLength(2); expect(h.events.every((e: any) => e.user)).toBe(true);
+    expect((await w.api(w.owner, hist.GET, { params: { kind: "nope", id: r2.body.id } })).status).toBe(400);
+  });
+});

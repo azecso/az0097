@@ -1,4 +1,5 @@
 import { profitStepUpRequired, requireStepUp } from "../stepup";
+import { setSetting } from "./settings";
 import { z } from "zod";
 import type { Tx } from "../db";
 import type { Principal } from "../authz";
@@ -16,11 +17,11 @@ const nextDay = (s: string) => { const t = new Date(`${s}T00:00:00Z`); t.setUTCD
 const today = () => new Date().toISOString().slice(0, 10);
 
 export { profitStepUpRequired } from "../stepup";
-export async function setProfitStepUp(tx: Tx, who: Principal, actor: Actor, on: boolean) {
+export async function setProfitStepUp(tx: Tx, who: Principal, actor: Actor, on: boolean, o: { effectiveFrom?: string; reason?: string } = {}) {
   if (!who.isOwner) throw forbidden("OWNER_ONLY");
-  await tx`UPDATE companies SET settings = jsonb_set(settings, '{profitStepUp}', ${on ? "true" : "false"}::jsonb), updated_at = now()`;
-  await audit(tx, actor, { action: "company.profit_step_up", entityType: "company", entityId: who.companyId, after: { profitStepUp: on } });
-  return { profitStepUp: on };
+  const r = await setSetting(tx, who, actor, "profitStepUp", on, { effectiveFrom: o.effectiveFrom, reason: o.reason?.trim() || "تغيير من المالك" });
+  if (r.effectiveFrom <= new Date().toISOString().slice(0, 10)) await tx`UPDATE companies SET settings = jsonb_set(settings, '{profitStepUp}', ${on ? "true" : "false"}::jsonb), updated_at = now()`;   // legacy mirror
+  return { profitStepUp: on, effectiveFrom: r.effectiveFrom };
 }
 
 /** Live profit statement — nothing to type in. Capital is never touched: expenses reduce PROFIT; cash only moves when something is actually paid. */

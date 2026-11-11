@@ -5,8 +5,8 @@ import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { MsgBox, StatusBadge, useAction, useLoad, PrintLink } from "@/components/ui";
 
-interface Ov { partners: { id: string; name: string; kind: string; dueProfit: string; payableToPartner: string; advancesOutstanding: string; capital: string; ownerDrawings: string; netDue: string }[]; liquidity: { cash: string; committed: string; available: string }; lossCarriedForward: string }
-interface Pv { eligibleProfit: string; deductions: string; adjustments: string; lossCarriedIn: string; reserved: string; periodResult: string; lossCovered: string; lossCarriedOut: string; distributable: string; ownerShare: string; partnerShare: string; lines: { docNo: string; adjustedProfit: string; ratio: string; linked: string; before: string; newly: string }[] }
+interface Ov { reserveBalance: string; partners: { id: string; name: string; kind: string; dueProfit: string; payableToPartner: string; advancesOutstanding: string; capital: string; ownerDrawings: string; netDue: string }[]; liquidity: { cash: string; committed: string; available: string }; lossCarriedForward: string }
+interface Pv { reserveBefore?: string; reserveAfter?: string; reserveReleased?: string; eligibleProfit: string; deductions: string; adjustments: string; lossCarriedIn: string; reserved: string; periodResult: string; lossCovered: string; lossCarriedOut: string; distributable: string; ownerShare: string; partnerShare: string; lines: { docNo: string; adjustedProfit: string; ratio: string; linked: string; before: string; newly: string }[] }
 interface S { id: string; draftRef: string; docNo: string | null; periodStart: string; periodEnd: string; status: string; distributable: string; lossCarriedOut: string; shares: { partnerId: string; kind: string; name: string; share: string; paid: string }[] }
 interface Po { id: string; docNo: string; docDate: string; partner: string; partnerKind: string; amount: string; advancesDeducted: string; status: string; settlementNo: string }
 interface Stmt { partner: { name: string }; netDue: string; lines: { date: string; entryNo: string; memo: string; account: string; accountName: string; debit: string; credit: string; netDue: string }[] }
@@ -14,9 +14,9 @@ export default function Partners() {
   const me = useMe(); const ov = useLoad<Ov | null>("/api/partners", null); const sets = useLoad<S[]>("/api/profit-settlements", []); const pos = useLoad<Po[]>("/api/profit-payouts", []);
   const cash = useLoad<{ id: string; name: string; currency: string; counts?: boolean; countsTowardAvailable: boolean }[]>("/api/cash-accounts", []).data.filter((c) => c.countsTowardAvailable && c.currency === "IQD");
   const { msg, busy, run } = useAction(() => { void ov.reload(); void sets.reload(); void pos.reload(); });
-  const [period, setPeriod] = useState({ start: `${today().slice(0, 4)}-01-01`, end: today() }); const [reserved, setReserved] = useState(""); const [rr, setRr] = useState(""); const [adj, setAdj] = useState("0"); const [pv, setPv] = useState<Pv | null>(null);
+  const [period, setPeriod] = useState({ start: `${today().slice(0, 4)}-01-01`, end: today() }); const [reserved, setReserved] = useState(""); const [rr, setRr] = useState(""); const [adj, setAdj] = useState("0"); const [adjR, setAdjR] = useState(""); const [rel, setRel] = useState(""); const [relR, setRelR] = useState(""); const [pv, setPv] = useState<Pv | null>(null);
   const [totp, setTotp] = useState(""); const [stmt, setStmt] = useState<Stmt | null>(null); const [pay, setPay] = useState<Record<string, string>>({}); const [adv, setAdv] = useState<Record<string, string>>({}); const [cashId, setCashId] = useState(""); const [reason, setReason] = useState("");
-  const body = { periodStart: period.start, periodEnd: period.end, reserved: reserved || "0", reservedReason: rr || null, adjustments: adj || "0" };
+  const body = { periodStart: period.start, periodEnd: period.end, reserved: reserved || "0", reservedReason: rr || null, adjustments: adj || "0", adjustmentReason: adjR || null, releaseReserve: rel || "0", releaseReason: relR || null };
   const key = () => `pay-${crypto.randomUUID()}`;
   return (<>
     <h1>الشراكة وتسوية الأرباح</h1>
@@ -31,14 +31,17 @@ export default function Partners() {
     <div className="card" style={{ display: "grid", gap: 12 }}>
       <div className="row"><div><label htmlFor="ps">من</label><input id="ps" type="date" value={period.start} onChange={(e) => setPeriod({ ...period, start: e.target.value })} /></div><div><label htmlFor="pe">إلى</label><input id="pe" type="date" value={period.end} onChange={(e) => setPeriod({ ...period, end: e.target.value })} /></div>
         <div><label htmlFor="rv">محجوز (اختياري)</label><input id="rv" value={reserved} onChange={(e) => setReserved(e.target.value)} dir="ltr" inputMode="decimal" /></div><div><label htmlFor="rr">سبب الحجز</label><input id="rr" value={rr} onChange={(e) => setRr(e.target.value)} /></div>
-        <div><label htmlFor="ad">تسوية يدوية (±)</label><input id="ad" value={adj} onChange={(e) => setAdj(e.target.value)} dir="ltr" /></div></div>
+        <div><label htmlFor="ad">تسوية يدوية (±)</label><input id="ad" value={adj} onChange={(e) => setAdj(e.target.value)} dir="ltr" /></div>
+        <div><label htmlFor="adr">سبب التسوية اليدوية (إلزامي عند وجودها)</label><input id="adr" value={adjR} onChange={(e) => setAdjR(e.target.value)} /></div></div>
+      <div className="row"><div><label htmlFor="rl">تحرير من رصيد الحجز</label><input id="rl" value={rel} onChange={(e) => setRel(e.target.value)} dir="ltr" inputMode="decimal" /></div><div><label htmlFor="rlr">سبب التحرير</label><input id="rlr" value={relR} onChange={(e) => setRelR(e.target.value)} /></div>
+        {ov.data && <div><div className="label">رصيد الحجز الحالي</div><strong className="num">{money(ov.data.reserveBalance)}</strong></div>}</div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button disabled={busy} onClick={async () => { try { setPv(await api<Pv>("/api/profit-settlements/preview", { method: "POST", body })); } catch (e) { setPv(null); await run(async () => { throw e; }, ""); } }}>معاينة</button>
         {can(me, "profit_settlement:create") && <button className="primary" disabled={busy} onClick={() => run(() => api("/api/profit-settlements", { method: "POST", body }), "حُفظت مسودة التسوية")}>حفظ كمسودة</button>}</div>
       <MsgBox msg={msg} />
       {pv && <table><tbody>
         <tr><td>أرباح مؤهلة جديدة (E)</td><td><span className="num">{money(pv.eligibleProfit)}</span></td></tr><tr><td>− مصاريف مستحقة وبنود أخرى (X)</td><td><span className="num">{money(pv.deductions)}</span></td></tr>
         <tr><td>± تسوية يدوية (A)</td><td><span className="num">{money(pv.adjustments)}</span></td></tr><tr><td>= نتيجة الفترة</td><td><strong className="num">{money(pv.periodResult)}</strong></td></tr>
-        <tr><td>خسارة مرحّلة سابقة / مُغطّاة</td><td><span className="num">{money(pv.lossCarriedIn)} / {money(pv.lossCovered)}</span></td></tr><tr><td>− محجوز (R)</td><td><span className="num">{money(pv.reserved)}</span></td></tr>
+        <tr><td>خسارة مرحّلة سابقة / مُغطّاة</td><td><span className="num">{money(pv.lossCarriedIn)} / {money(pv.lossCovered)}</span></td></tr><tr><td>− محجوز (R)</td><td><span className="num">{money(pv.reserved)}</span></td></tr>{pv.reserveReleased && Number(pv.reserveReleased) > 0 && <tr><td>+ محرَّر من الحجز</td><td><span className="num">{money(pv.reserveReleased)}</span></td></tr>}<tr><td>رصيد الحجز قبل / بعد</td><td><span className="num">{money(pv.reserveBefore ?? "0")} / {money(pv.reserveAfter ?? "0")}</span></td></tr>
         <tr><td><strong>الربح القابل للتوزيع</strong></td><td><strong className="num">{money(pv.distributable)}</strong></td></tr><tr><td>المالك / الشريك</td><td><span className="num">{money(pv.ownerShare)} / {money(pv.partnerShare)}</span></td></tr>
         <tr><td>خسارة مرحّلة للفترة التالية</td><td><span className="num">{money(pv.lossCarriedOut)}</span></td></tr></tbody></table>}
       {pv && pv.lines.length > 0 && <div className="cards-as-list" style={{ overflowX: "auto" }}><table><thead><tr><th>الفاتورة</th><th>الربح المعدّل</th><th>نسبة التحصيل</th><th>المؤهل</th><th>أُفرج سابقاً</th><th>الجديد</th></tr></thead>

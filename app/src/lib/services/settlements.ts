@@ -21,7 +21,7 @@ const partnerRow = async (tx: Tx, kind: "OWNER" | "PARTNER") => (await tx`SELECT
 //   A  signed manual adjustment (documented)         R  amount the owner reserves (documented)         L  loss carried in
 //   B = E − X + A ;  B<0 => loss carried out, D=0 ;  else cover=min(L,B), D = max(B − cover − R, 0), then 50/50 (partner floors, owner remainder)
 // ============================================================================================================
-export const settlementInput = z.object({ periodStart: dateStr, periodEnd: dateStr, reserved: moneyStr.default("0"), reservedReason: z.string().max(300).nullish(), releaseReserve: moneyStr.default("0"), releaseReason: z.string().max(300).nullish(), adjustments: z.string().regex(/^-?\d{1,14}(\.\d{1,4})?$/).default("0"), notes: z.string().max(500).nullish() });
+export const settlementInput = z.object({ periodStart: dateStr, periodEnd: dateStr, reserved: moneyStr.default("0"), reservedReason: z.string().max(300).nullish(), releaseReserve: moneyStr.default("0"), releaseReason: z.string().max(300).nullish(), adjustmentReason: z.string().max(300).nullish(), adjustments: z.string().regex(/^-?\d{1,14}(\.\d{1,4})?$/).default("0"), notes: z.string().max(500).nullish() });
 
 /** Reserve balance = everything the owner held back in approved settlements − everything released again (documented, never lost). */
 export async function reserveBalance(tx: Tx) {
@@ -32,6 +32,7 @@ export async function reserveBalance(tx: Tx) {
 export async function computeSettlement(tx: Tx, i: z.infer<typeof settlementInput>) {
   if (i.periodEnd < i.periodStart) throw badRequest("BAD_PERIOD", "نهاية الفترة قبل بدايتها");
   if (d(i.reserved).gt(0) && !(i.reservedReason ?? "").trim()) throw badRequest("RESERVED_REASON_REQUIRED", "المبلغ المحجوز يتطلب سبباً مكتوباً");
+  if (!d(i.adjustments).isZero() && (i.adjustmentReason ?? "").trim().length < 5) throw badRequest("ADJUSTMENT_REASON_REQUIRED", "التعديل اليدوي على الربح يتطلب سبباً مكتوباً (5 أحرف على الأقل)");
   const Rel = d(i.releaseReserve ?? "0");
   if (Rel.gt(0) && !(i.releaseReason ?? "").trim()) throw badRequest("RELEASE_REASON_REQUIRED", "تحرير مبلغ محجوز يتطلب سبباً مكتوباً");
   const [prev] = await tx`SELECT period_end::text AS pe, deductions_cum::text AS dc, loss_carried_out::text AS lco FROM profit_settlements WHERE status = 'POSTED' ORDER BY period_end DESC LIMIT 1`;
@@ -75,8 +76,8 @@ export const previewSettlement = (tx: Tx, i: z.infer<typeof settlementInput>) =>
 
 export async function createSettlementDraft(tx: Tx, who: Principal, actor: Actor, i: z.infer<typeof settlementInput>) {
   const c = await computeSettlement(tx, i);
-  const [s] = await tx`INSERT INTO profit_settlements(company_id, draft_ref, period_start, period_end, eligible_profit, deductions, deductions_cum, adjustments, loss_carried_in, reserved, reserved_reason, loss_covered, loss_carried_out, distributable, reserve_released, reserve_release_reason, notes, created_by)
-    VALUES (${who.companyId}, ${draftRef()}, ${i.periodStart}, ${i.periodEnd}, ${c.eligibleProfit}, ${c.deductions}, ${c.deductionsCum}, ${c.adjustments}, ${c.lossCarriedIn}, ${c.reserved}, ${i.reservedReason ?? null}, ${c.lossCovered}, ${c.lossCarriedOut}, ${c.distributable}, ${c.reserveReleased}, ${i.releaseReason ?? null}, ${i.notes ?? null}, ${who.userId})
+  const [s] = await tx`INSERT INTO profit_settlements(company_id, draft_ref, period_start, period_end, eligible_profit, deductions, deductions_cum, adjustments, loss_carried_in, reserved, reserved_reason, loss_covered, loss_carried_out, distributable, reserve_released, reserve_release_reason, adjustment_reason, notes, created_by)
+    VALUES (${who.companyId}, ${draftRef()}, ${i.periodStart}, ${i.periodEnd}, ${c.eligibleProfit}, ${c.deductions}, ${c.deductionsCum}, ${c.adjustments}, ${c.lossCarriedIn}, ${c.reserved}, ${i.reservedReason ?? null}, ${c.lossCovered}, ${c.lossCarriedOut}, ${c.distributable}, ${c.reserveReleased}, ${i.releaseReason ?? null}, ${i.adjustmentReason ?? null}, ${i.notes ?? null}, ${who.userId})
     RETURNING id, draft_ref AS "draftRef", version`;
   await audit(tx, actor, { action: "settlement.create_draft", entityType: "profit_settlement", entityId: s!.id, after: { ...i, preview: { distributable: c.distributable } } });
   return { ...s!, preview: c };
@@ -106,7 +107,7 @@ export async function approveSettlement(tx: Tx, who: Principal, actor: Actor, id
   const [s] = await tx`SELECT * FROM profit_settlements WHERE id = ${id} FOR UPDATE`;
   if (!s) throw notFound();
   if (s.status !== "DRAFT") throw conflict("NOT_DRAFT", "التسوية ليست مسودة — لا يمكن اعتماد نفس التسوية مرتين");
-  const c = await computeSettlement(tx, { periodStart: dateOf(s.period_start), periodEnd: dateOf(s.period_end), reserved: s.reserved, reservedReason: s.reserved_reason, releaseReserve: s.reserve_released, releaseReason: s.reserve_release_reason, adjustments: s.adjustments, notes: s.notes });
+  const c = await computeSettlement(tx, { periodStart: dateOf(s.period_start), periodEnd: dateOf(s.period_end), reserved: s.reserved, reservedReason: s.reserved_reason, releaseReserve: s.reserve_released, releaseReason: s.reserve_release_reason, adjustmentReason: s.adjustment_reason, adjustments: s.adjustments, notes: s.notes });
   const docNo = (await tx`SELECT next_document_number(${who.companyId}, 'profit_settlement', ${yearOf(dateOf(s.period_end))}) AS n`)[0]!.n as string;
   for (const l of c.lines)
     await tx`INSERT INTO profit_settlement_lines(company_id, settlement_id, invoice_id, adjusted_profit, collected_ratio, linked_profit, released_before, newly_released, released_after)
@@ -210,7 +211,7 @@ export async function partnersOverview(tx: Tx) {
     out.push({ ...p, dueProfit: r!.due_profit, payableToPartner: r!.payable, advancesOutstanding: r!.advances, capital: r!.capital, ownerDrawings: r!.drawings,
       netDue: d(r!.due_profit).plus(r!.payable).minus(r!.advances).toString() });
   }
-  return { partners: out, liquidity: await liquiditySummary(tx), lossCarriedForward: (await tx`SELECT COALESCE((SELECT loss_carried_out FROM profit_settlements WHERE status = 'POSTED' ORDER BY period_end DESC LIMIT 1), 0)::text AS v`)[0]!.v };
+  return { partners: out, liquidity: await liquiditySummary(tx), reserveBalance: (await reserveBalance(tx)).toString(), lossCarriedForward: (await tx`SELECT COALESCE((SELECT loss_carried_out FROM profit_settlements WHERE status = 'POSTED' ORDER BY period_end DESC LIMIT 1), 0)::text AS v`)[0]!.v };
 }
 async function liquiditySummary(tx: Tx) { const l = await distributableLiquidity(tx); return { cash: l.cash.toString(), committed: l.committed.toString(), available: l.available.toString(), customerCredits: l.customerCredits, accruedLiabilities: l.accruedLiabilities, suppliersDue: l.suppliersDue, byCurrency: l.byCurrency }; }
 

@@ -14,7 +14,7 @@ interface Doc { breakdown?: { invoiced: string; deliveredValue: string; delivere
 export default function InvoiceView() {
   const { id } = useParams<{ id: string }>(); const router = useRouter(); const me = useMe();
   const { data: d, reload, err } = useLoad<Doc | null>(`/api/sales-invoices/${id}`, null); const { msg, busy, run } = useAction(reload);
-  const [reason, setReason] = useState(""); const [ret, setRet] = useState<Record<string, string>>({}); const [dq, setDq] = useState<Record<string, string>>({}); const [pay, setPay] = useState(""); const [extOn, setExtOn] = useState(false); const [extAmt] = useState(""); const [extNote, setExtNote] = useState("");
+  const [hist, setHist] = useState<{ chain: { id: string; docNo: string; status: string; net: string; createdAt: string; replaced: boolean }[]; events: { id: string; at: string; user: string; action: string; reason: string | null }[] } | null>(null); const [reason, setReason] = useState(""); const [ret, setRet] = useState<Record<string, string>>({}); const [dq, setDq] = useState<Record<string, string>>({}); const [pay, setPay] = useState(""); const [extOn, setExtOn] = useState(false); const [extAmt] = useState(""); const [extNote, setExtNote] = useState("");
   const cash = useLoad<{ id: string; name: string; currency: string }[]>("/api/cash-accounts", []).data; const [acct, setAcct] = useState("");
   const cst = useLoad<{ unappliedCredit?: string } | null>(d && d.status === "POSTED" ? `/api/customers/${d.customerId}/statement` : null, null).data;
   if (!d) return <p>{err || "جارٍ التحميل…"}</p>;
@@ -34,6 +34,9 @@ export default function InvoiceView() {
       {canProfit && d.profit && <><div><div className="label">إجمالي الربح</div><span className="num">{money(d.profit.grossProfitBase)} IQD</span></div>
         <div><div className="label">الربح المرتبط بالتحصيل (مؤشر)</div><span className="num">{money(d.profit.linkedProfitBase)} IQD</span></div></>}
     </div>
+    {posted && can(me, "audit:view") && <div style={{ marginTop: 8 }}><button onClick={() => api<{ chain: { id: string; docNo: string; status: string; net: string; createdAt: string; replaced: boolean }[]; events: { id: string; at: string; user: string; action: string; reason: string | null }[] }>(`/api/document-history/sales-invoices/${id}`).then(setHist)}>سجل إصدارات الفاتورة</button>
+      {hist && <div className="card cards-as-list"><table><thead><tr><th>الإصدار</th><th>الحالة</th><th>الصافي</th><th>التاريخ</th></tr></thead><tbody>{hist.chain.map((c) => <tr key={c.id}><td><span className="num">{c.docNo}</span>{c.replaced ? " (استُبدل)" : " (الحالي)"}</td><td>{c.status}</td><td><span className="num">{money(c.net)}</span></td><td><span className="num">{new Date(c.createdAt).toLocaleString("ar-IQ")}</span></td></tr>)}</tbody></table>
+        <table><thead><tr><th>الإجراء</th><th>المستخدم</th><th>الوقت</th><th>السبب</th></tr></thead><tbody>{hist.events.map((e) => <tr key={e.id}><td>{e.action}</td><td>{e.user}</td><td><span className="num">{new Date(e.at).toLocaleString("ar-IQ")}</span></td><td>{e.reason ?? ""}</td></tr>)}</tbody></table></div>}</div>}
     {posted && d.breakdown && <div className="card" style={{ marginTop: 12 }} aria-label="تفصيل الفاتورة"><h2>تفصيل الفاتورة</h2><div className="grid">
       <div className="card stat"><div className="label">المفوتر</div><div className="value"><span className="num">{money(d.breakdown.invoiced)}</span></div><small>{d.currency}</small></div>
       <div className="card stat"><div className="label">المسلَّم (قيمة)</div><div className="value"><span className="num">{money(d.breakdown.deliveredValue)}</span></div><small>{Math.round(Number(d.breakdown.deliveredRatio) * 100)}% من الكميات</small></div>

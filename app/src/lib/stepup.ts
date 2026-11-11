@@ -2,6 +2,7 @@ import type { Tx } from "./db";
 import type { Principal } from "./authz";
 import { AppError } from "./errors";
 import { unseal, verifyTotp } from "./totp";
+import { settingOn } from "./services/settings";
 
 /**
  * Critical owner actions (capital, profit settlement/payout, period reopening) require a fresh TOTP code.
@@ -23,5 +24,5 @@ export async function requireStepUp(tx: Tx, who: Principal, code: string | null 
 /** Company switch (default OFF): ask for the owner's TOTP code when approving/paying profit settlements. Capital and period re-opening always require it. */
 export async function profitStepUpRequired(tx: Tx) {
   const [c] = await tx`SELECT settings->>'profitStepUp' AS v FROM companies`;
-  return c?.v === "true";
+  return settingOn<boolean>(tx, "profitStepUp", new Date().toISOString().slice(0, 10), c?.v === "true");      // history wins over the legacy flag
 }
