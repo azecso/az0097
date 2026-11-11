@@ -148,26 +148,23 @@ export function coverByCredit(rows: { id: string; partyId: string; currency: str
   return cover;
 }
 
-/** One row per customer (and currency): total sales, returns, paid (allocated + unallocated receipts) and what is still owed. */
+/** Every invoice on its own row (never grouped): customer, number, date, total, returns, paid (every posted receipt allocation, cash or not) and what is still owed, with per-currency totals. */
 export async function customersSummary(tx: Tx, partyId?: string) {
   const rows = await tx`
-    SELECT c.id AS "partyId", c.name AS party, si.currency, count(*)::int AS invoices, min(si.doc_date)::text AS "firstDate", max(si.doc_date)::text AS "lastDate",
-      sum(si.net)::text AS sales,
-      COALESCE(sum((SELECT sum(value_orig) FROM sales_returns r WHERE r.invoice_id = si.id AND r.status = 'POSTED')), 0)::text AS returns,
-      COALESCE(sum((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED')), 0)::text AS allocated
+    SELECT c.name AS party, c.id AS "partyId", si.id AS "invoiceId", si.doc_no AS "invoiceNo", si.doc_date::text AS "invoiceDate", si.currency, si.net::text AS sales,
+      COALESCE((SELECT sum(r.applied_orig) FROM sales_returns r WHERE r.invoice_id = si.id AND r.status = 'POSTED'), 0)::text AS returns,
+      COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = si.id AND cr.status = 'POSTED'), 0)::text AS paid
     FROM sales_invoices si JOIN contacts c ON c.id = si.customer_id WHERE si.status = 'POSTED' AND (${partyId ?? null}::uuid IS NULL OR c.id = ${partyId ?? null}::uuid)
-    GROUP BY c.id, c.name, si.currency ORDER BY c.name`;
-  const credits = await unappliedCredits(tx, "debtors");
-  const open = await receivablesAging(tx) as unknown as Record<string, any>[];
-  const owed = new Map<string, Decimal>(); for (const r of open) { const k = `${r.customerId}|${r.currency}`; owed.set(k, (owed.get(k) ?? d(0)).plus(d(r.outstanding))); }
-  const out = (rows as unknown as Record<string, any>[]).map((r) => {
-    const k = `${r.partyId}|${r.currency}`; const credit = credits.get(k) ?? d(0); const openAmt = owed.get(k) ?? d(0);
-    const remaining = Decimal.max(0, openAmt.minus(credit)); const paid = d(r.sales).minus(d(r.returns)).minus(remaining);
-    return { partyId: r.partyId as string, party: r.party as string, currency: r.currency as string, invoices: r.invoices as number, invoiceDate: r.firstDate === r.lastDate ? (r.lastDate as string) : `${r.firstDate} ← ${r.lastDate}`, sales: r.sales as string, returns: r.returns as string, paid: paid.toString(), unapplied: credit.toString(), remaining: remaining.toString(), status: remaining.lte(0) ? "PAID" : paid.gt(0) ? "PARTIAL" : "UNPAID" };
+    ORDER BY c.name, c.id, si.doc_date, si.doc_no`;
+  const credits = await unappliedCredits(tx, "debtors"); const seen = new Set<string>(); const credit = new Map<string, Decimal>();
+  for (const r of rows as unknown as Record<string, any>[]) { const k = `${r.partyId}|${r.currency}`; if (!seen.has(k)) { seen.add(k); credit.set(r.currency, (credit.get(r.currency) ?? d(0)).plus(credits.get(k) ?? d(0))); } }
+  const out = (rows as unknown as Record<string, any>[]).map((r): Record<string, any> => {
+    const remaining = Decimal.max(0, d(r.sales).minus(d(r.returns)).minus(d(r.paid)));
+    return { ...r, remaining: remaining.toString(), status: remaining.isZero() ? "مسدَّدة" : d(r.paid).gt(0) ? "مسدَّدة جزئياً" : "غير مسدَّدة", key: r.invoiceId as string };
   });
   const t = new Map<string, { sales: Decimal; returns: Decimal; paid: Decimal; remaining: Decimal }>();
   for (const r of out) { const e = t.get(r.currency) ?? { sales: d(0), returns: d(0), paid: d(0), remaining: d(0) }; e.sales = e.sales.plus(d(r.sales)); e.returns = e.returns.plus(d(r.returns)); e.paid = e.paid.plus(d(r.paid)); e.remaining = e.remaining.plus(d(r.remaining)); t.set(r.currency, e); }
-  return { rows: out, totals: [...t].map(([currency, e]) => ({ currency, sales: e.sales.toString(), returns: e.returns.toString(), paid: e.paid.toString(), remaining: e.remaining.toString() })) };
+  return { rows: out, totals: [...t].map(([currency, e]) => ({ currency, sales: e.sales.toString(), returns: e.returns.toString(), paid: e.paid.toString(), remaining: e.remaining.toString(), credit: (credit.get(currency) ?? d(0)).toString() })) };
 }
 
 /** Profit that was distributed OUTSIDE the system when an invoice was collected: one row per invoice allocation, with the cash part of the same receipt beside it. */

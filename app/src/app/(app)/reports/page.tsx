@@ -7,7 +7,7 @@ import { MsgBox, useLoad } from "@/components/ui";
 import { GROUP_LABEL, TYPE_TITLE, apiOf, colsOf, exportOf, type RType } from "@/lib/report-config";
 
 interface Opt { id: string; name: string; code?: string; kind?: string }
-const TYPES = (Object.keys(TYPE_TITLE) as RType[]).filter((t) => t !== "customers");            // customer summary moved to the per-currency statement report
+const TYPES = Object.keys(TYPE_TITLE) as RType[];
 const FIN: [string, string][] = [["trial-balance", "ميزان المراجعة"], ["ledger?account=1110", "الأستاذ العام"], ["profit-loss", "الأرباح والخسائر"], ["balance-sheet", "المركز المالي"], ["customer-invoices", "فواتير العملاء التفصيلية (المسدَّد والمتبقي وكل حركة)"], ["customers", "كشف حسابات العملاء"], ["suppliers", "كشف حسابات الموردين"], ["inventory-movement", "حركة المخزون"], ["cash-movement", "حركة النقد والعهدة"], ["profit-statement", "كشف الأرباح والشركاء"], ["outside-batches", "دفعات الربح خارج التوزيع"], ["outside-sales", "مبيعات الربح خارج التوزيع"]];
 const STATUS_AR: Record<string, string> = { PAID: "مسدّد بالكامل", PARTIAL: "مسدّد جزئياً", UNPAID: "غير مسدّد" };
 const cell = (v: unknown, kind?: string) => (typeof v === "string" && STATUS_AR[v] ? STATUS_AR[v] : v === null || v === undefined || v === "" ? "—" : kind === "money" ? money(v as string) : kind === "qty" ? Number(v).toLocaleString("en-US", { maximumFractionDigits: 4 }) : String(v));
@@ -52,7 +52,7 @@ function Inner() {
           {(type === "sales" || type === "purchases") && tot && rows.length > 0 && <tr style={{ fontWeight: 700 }}>{cols.map((c, i) => <td key={c.key}>{i === 0 ? "الإجمالي" : c.key in tot ? <span className="num">{cell(tot[c.key], c.kind)}</span> : ""}</td>)}</tr>}
         </tbody></table>
       {type === "external" && tot && !Array.isArray(tot) && <p>الإجمالي ({tot.count} سند): مستحصل نقداً <strong className="num">{money(tot.cash)}</strong> · موزَّع خارج النظام <strong className="num">{money(tot.external)}</strong> (لكل شريك <span className="num">{money(tot.perPartner)}</span>)</p>}
-      {type === "customers" && tot && Array.isArray(tot) && <p>الإجمالي: {tot.map((t: any) => <strong key={t.currency}>مبيعات <span className="num">{money(t.sales)}</span> · مسدَّد <span className="num">{money(t.paid)}</span> · متبقٍ <span className="num">{money(t.remaining)}</span> {t.currency}&nbsp;&nbsp;</strong>)}</p>}
+      {type === "customers" && tot && Array.isArray(tot) && <p>الإجمالي: {tot.map((t: any) => <strong key={t.currency}>مبيعات <span className="num">{money(t.sales)}</span> · مسدَّد <span className="num">{money(t.paid)}</span> · متبقٍ <span className="num">{money(t.remaining)}</span> {t.currency}{Number(t.credit) > 0 && <> · رصيد دائن غير مخصَّص للعملاء <span className="num">{money(t.credit)}</span> (لم يُخصَّص على فاتورة)</>}&nbsp;&nbsp;</strong>)}</p>}
       {(type === "debtors" || type === "creditors") && Array.isArray(tot) && <p>الإجمالي: {tot.map((t: any) => <strong key={t.currency}><span className="num">{money(t.total)}</span> {t.currency}&nbsp;&nbsp;</strong>)}</p>}
       {(type === "sales" || type === "purchases") && <p style={{ fontSize: 12 }}>المبالغ بالدينار (القيمة الأساسية المسجّلة عند الترحيل){type === "purchases" && group === "product" ? " · مصاريف الشراء والمرتجعات غير موزعة على المواد" : ""}.</p>}
     </div>}

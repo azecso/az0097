@@ -24,6 +24,9 @@ describe("customer invoices in detail", () => {
     expect(Number(mvA[0].balance)).toBe(7000);
     const t = r.totals.find((x: any) => x.currency === "IQD"); expect(Number(t.invoiceTotal)).toBe(rows.filter((x) => x.invoiceTotal).reduce((s, x) => s + Number(x.invoiceTotal), 0));
     expect(Number(t.remaining)).toBe(rows.filter((x) => x.remaining).reduce((s, x) => s + Number(x.remaining), 0));
+    const summ = (await w.api(w.owner, w.R.repCust, { path: `/api/reports/customers-summary?partyId=${ga.customerId}` } as any)).body;           // the customers summary lists each invoice on its own row
+    expect(summ.rows.filter((x: any) => x.invoiceNo === ga.docNo || x.invoiceNo === gb.docNo)).toHaveLength(2);
+    const sa = summ.rows.find((x: any) => x.invoiceNo === ga.docNo); expect(Number(sa.paid)).toBe(3000); expect(Number(sa.remaining)).toBe(7000);
     // agrees with the statement report for the same customer
     const st = (await w.api(w.owner, w.R.report2, { params: { id: "customers" }, path: `/api/reports2/customers?partyId=${ga.customerId}` } as any)).body.rows.find((x: any) => x.currency === "IQD");
     expect(Number(st.closing)).toBe(rows.filter((x) => x.remaining).reduce((s, x) => s + Number(x.remaining), 0));
