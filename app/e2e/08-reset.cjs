@@ -1,0 +1,22 @@
+const { chromium } = require("./pw.cjs");
+const BASE = process.env.E2E_BASE || "http://localhost:3100";
+(async () => {
+  const b = await chromium.launch(); const out = []; const ok = (n, c) => out.push((c ? "PASS " : "FAIL ") + n);
+  const p = await (await b.newContext({ viewport: { width: 1200, height: 900 }, acceptDownloads: true })).newPage(); const errs = [];
+  p.on("pageerror", (e) => errs.push(e.message)); p.on("console", (m) => { if (m.type() === "error" && !/status of 40[139]/.test(m.text())) errs.push(m.text()); });
+  const call = (method, path, body) => p.evaluate(async ([method, path, body]) => { const me = await (await fetch("/api/auth/me")).json(); const r = await fetch(path, { method, headers: { "content-type": "application/json", "x-csrf-token": me.csrf }, body: body ? JSON.stringify(body) : undefined }); return r.json(); }, [method, path, body]);
+  await p.goto(BASE + "/login"); await p.fill("#u", "owner"); await p.fill("#p", "Owner-Smoke-Pass-77"); await p.click("button.primary"); await p.waitForURL(BASE + "/");
+  await call("POST", "/api/contacts", { kind: "CUSTOMER", code: "C1", name: "عميل" });
+  await p.goto(BASE + "/settings/reset"); await p.waitForSelector("#ph");
+  await p.fill("#ph", "تصفير كل البيانات");
+  ok("reset button stays disabled until the backup is downloaded", await p.isDisabled("button:has-text('تصفير البيانات الآن')"));
+  const [dl] = await Promise.all([p.waitForEvent("download"), p.click("button:has-text('تنزيل النسخة الاحتياطية')")]);
+  ok("backup file is offered for download", /backup-before-reset/.test(dl.suggestedFilename()));
+  await p.waitForSelector("text=✔ تم التنزيل");
+  await p.click("button:has-text('تصفير البيانات الآن')"); await p.waitForSelector(".msg.ok");
+  const left = await p.evaluate(async () => (await (await fetch("/api/contacts")).json()).length);
+  ok("customers are gone after the reset", left === 0);
+  ok("owner is still logged in with settings intact", (await call("GET", "/api/cash-accounts")).length > 0);
+  ok("no console/page errors", errs.length === 0); if (errs.length) out.push("  " + errs.slice(0, 3).join(" | "));
+  console.log(out.join("\n")); await b.close();
+})().catch((e) => { console.error("SMOKE ERROR", e.message.split("\n").slice(0, 8).join("\n")); process.exit(1); });

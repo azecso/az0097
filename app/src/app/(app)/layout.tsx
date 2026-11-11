@@ -17,7 +17,7 @@ const NAV = [
   { href: "/profits", label: "الأرباح والتوزيع", perm: "profit_settlement:view" }, { href: "/partners", label: "الشراكة والتسويات", perm: "profit_settlement:view" },
   { href: "/accounting", label: "المحاسبة", perm: "journal:view" }, { href: "/accounting/opening", label: "الأرصدة الافتتاحية", perm: "opening_balance:view" }, { href: "/accounting/periods", label: "إقفال الفترات", perm: "period_close:view" },
   { href: "/sync", label: "المزامنة والعمل أوفلاين" }, { href: "/settings/company", label: "الشركة" }, { href: "/settings/fx", label: "أسعار الصرف", perm: "fx_rate:view" },
-  { href: "/settings/users", label: "المستخدمون والصلاحيات", owner: true }, { href: "/settings/security", label: "الأمان (2FA)", owner: true }, { href: "/settings/backup", label: "سلامة البيانات والنسخ", owner: true }, { href: "/settings/audit", label: "سجل التدقيق", perm: "audit:view" },
+  { href: "/settings/users", label: "المستخدمون والصلاحيات", owner: true }, { href: "/settings/security", label: "الأمان (2FA)", owner: true }, { href: "/settings/reset", label: "تصفير البيانات", owner: true }, { href: "/settings/backup", label: "سلامة البيانات والنسخ", owner: true }, { href: "/settings/audit", label: "سجل التدقيق", perm: "audit:view" },
 ];
 
 export default function Shell({ children }: { children: React.ReactNode }) {
