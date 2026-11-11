@@ -58,7 +58,7 @@ function Inner() {
           <div><label>الوحدة</label><select value={l.uom} onChange={(e) => upd(i, "uom", e.target.value)}>{p && [p.baseUom, ...p.uoms.map((u) => u.uom)].map((u) => <option key={u}>{u}</option>)}</select></div>
           <div><label>الكمية</label><input value={l.qty} onChange={(e) => upd(i, "qty", e.target.value)} inputMode="decimal" dir="ltr" required /></div>
           <div><label>سعر الوحدة ({cur})</label><input value={l.unitPrice} onChange={(e) => upd(i, "unitPrice", e.target.value)} inputMode="decimal" dir="ltr" required /></div>
-          <div><label>نوع البند</label><select value={l.profitClass} onChange={(e) => upd(i, "profitClass", e.target.value)} aria-label="نوع البند"><option value="PARTNERSHIP">عادي (ضمن الشراكة)</option><option value="USED">مستعمل (خارج أرباح الشراكة)</option></select></div>
+          <div><label>نوع البند</label><select value={l.profitClass} onChange={(e) => upd(i, "profitClass", e.target.value)} aria-label="نوع البند"><option value="PARTNERSHIP">عادي (ضمن الشراكة)</option><option value="USED">الربح خارج التوزيع</option></select></div>
           <div><label>موقع الاستلام</label><select value={l.locationId} onChange={(e) => upd(i, "locationId", e.target.value)}><option value="">الرئيسي</option>{locs.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
           {lines.length > 1 && <button type="button" className="danger" onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>حذف البند</button>}
         </div>); })}

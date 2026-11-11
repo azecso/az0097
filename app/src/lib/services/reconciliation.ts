@@ -59,5 +59,9 @@ export async function reconcile(tx: Tx): Promise<{ ok: boolean; checks: RecCheck
   const [res] = await tx`SELECT COALESCE(sum(reserved - reserve_released), 0)::text AS v FROM profit_settlements WHERE status = 'POSTED'`;
   add({ code: "PROFIT_RESERVE", title: "رصيد حجز الأرباح (لا يكون سالباً)", ok: !d(res!.v).isNegative(), summary: `رصيد الحجز ${res!.v}`, rows: [], hint: "التحرير لا يتجاوز المحجوز" });
 
+  const [om] = await tx`SELECT COALESCE((SELECT sum(debit_base - credit_base) FROM journal_lines jl JOIN accounts a ON a.id = jl.account_id WHERE a.code = '3600'), 0)::text AS gl,
+      COALESCE((SELECT sum(round(a.amount * si.exchange_rate_snapshot)) FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id JOIN sales_invoices si ON si.id = a.invoice_id
+                WHERE r.status = 'POSTED' AND a.external AND a.external_kind = 'OUTSIDE_MARGIN'), 0)::text AS sub`;
+  add({ code: "OUTSIDE_MARGIN", title: "فرق الربح المستلم خارج الصندوق (3600 = تخصيصات السندات)", ok: d(om!.gl).eq(om!.sub as string), summary: `الأستاذ ${om!.gl} • السندات ${om!.sub}`, rows: d(om!.gl).eq(om!.sub as string) ? [] : [{ الأستاذ: om!.gl as string, السندات: om!.sub as string }], hint: "كل مبلغ خارج الصندوق يجب أن يقابله تخصيص في سند قبض مرحّل" });
   return { ok: checks.every((c) => c.ok), checks };
 }
