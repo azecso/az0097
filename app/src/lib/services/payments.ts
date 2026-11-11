@@ -125,3 +125,22 @@ export async function getSupplierPayment(tx: Tx, id: string) {
     return { purchaseNo: x.purchaseNo as string, invoiceTotal: x.invoiceTotal as string, amount: x.amount as string, paidToDate: x.paidToDate as string, returned: x.returned as string, remaining: rem.toString(), state: rem.lte(0) ? "PAID" : "PARTIAL" }; });
   return { ...p, allocations };
 }
+
+// =========================== pay from the purchase screen: ONE atomic, idempotent action ===========================
+export const payOnPurchaseSchema = z.object({ requestId: z.string().min(8).max(120), docDate: dateStr, cashAccountId: uuid, currency: currencyCode, exchangeRate: rateStr.nullish(), amount: moneyStr, notes: z.string().max(500).nullish() });
+/** Create + post the supplier payment allocated to THIS purchase in one transaction; a retry with the same requestId returns the first result. */
+export async function payOnPurchase(tx: Tx, who: Principal, actor: Actor, purchaseId: string, i: z.infer<typeof payOnPurchaseSchema>) {
+  const { once } = await import("../idempotency");
+  return once(tx, who, i.requestId, `pay:${purchaseId}`, async () => {
+    const [po] = await tx`SELECT supplier_id, currency, status, payment_type FROM purchase_orders WHERE id = ${purchaseId} FOR UPDATE`;
+    if (!po) throw notFound();
+    if (po.status !== "POSTED") throw conflict("PURCHASE_NOT_POSTED", "رحّل فاتورة الشراء أولاً");
+    if (po.payment_type !== "CREDIT") throw conflict("NOT_CREDIT_PURCHASE", "فاتورة الشراء نقدية؛ لا يوجد مستحق للسداد");
+    const out = d((await purchaseOutstanding(tx, purchaseId)).outstanding);
+    if (out.lte(0)) throw conflict("ALREADY_SETTLED", "الفاتورة مسدَّدة بالكامل");
+    if (po.currency !== i.currency) throw badRequest("CASH_CURRENCY_MISMATCH", `الفاتورة بعملة ${po.currency}؛ اختر صندوقاً بالعملة نفسها`);
+    const p = await createPayment(tx, who, actor, { supplierId: po.supplier_id as string, docDate: i.docDate, cashAccountId: i.cashAccountId, currency: i.currency, exchangeRate: i.exchangeRate, amount: i.amount, notes: i.notes ?? null, allocations: [{ purchaseId, amount: i.amount }] });
+    const posted = await postPayment(tx, who, actor, p.id as string);
+    return { paymentId: p.id as string, docNo: posted.docNo as string, outstanding: (await purchaseOutstanding(tx, purchaseId)).outstanding };
+  });
+}

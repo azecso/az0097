@@ -4,7 +4,7 @@ import type { Tx } from "../db";
 import { audit, type Actor } from "../audit";
 import type { Principal } from "../authz";
 import { badRequest, conflict, notFound } from "../errors";
-import { d, split5050, toBase } from "../money";
+import { d, roundMoney, split5050, toBase } from "../money";
 import { postJournal, reverseEntry, type JLine } from "../ledger";
 import { currencyCode, dateStr, draftRef, moneyStr, rateStr, resolveRate, uuid, yearOf } from "./common";
 import { invoiceFinancials, invoiceProfit } from "./sales";
@@ -30,10 +30,22 @@ export async function customerCredit(tx: Tx, customerId: string) {
 
 // =========================== receipts (سند قبض) ===========================
 export const receiptSchema = z.object({
-  customerId: uuid, docDate: dateStr, kind: z.enum(["CASH", "CREDIT_APPLICATION"]).default("CASH"), cashAccountId: uuid.nullish(), currency: currencyCode, exchangeRate: rateStr.nullish(),
+  customerId: uuid, docDate: dateStr, kind: z.enum(["CASH", "CREDIT_APPLICATION"]).default("CASH"), cashAccountId: uuid.nullish(), currency: currencyCode, exchangeRate: rateStr.nullish(), settlementRate: rateStr.nullish(),
   amount: moneyStr, notes: z.string().max(500).nullish(),
   allocations: z.array(z.object({ invoiceId: uuid, amount: moneyStr, externalAmount: moneyStr.default("0"), externalNote: z.string().max(300).nullish() })).max(100).default([]),
 });
+
+/**
+ * Explicit currency conversion on a receipt (policy §4): `rate` = dinars per 1 USD. Money received in `from` settles an invoice in `to`:
+ * USD -> IQD multiplies, IQD -> USD divides. Rounded to the target currency's precision; the rate is stored on the receipt and shown to the user.
+ */
+export function convertSettlement(amount: Decimal.Value, from: string, to: string, rate: Decimal.Value): Decimal {
+  if (from === to) return roundMoney(amount, to);
+  if (from === "USD" && to === "IQD") return roundMoney(d(amount).mul(rate), "IQD");
+  if (from === "IQD" && to === "USD") return roundMoney(d(amount).div(rate), "USD");
+  throw badRequest("UNSUPPORTED_CONVERSION");
+}
+const lowerBound = (amount: Decimal.Value, from: string, to: string, rate: Decimal.Value) => convertSettlement(amount, from, to, rate);
 
 async function validate(tx: Tx, i: z.infer<typeof receiptSchema>, who: Principal) {
   const amount = d(i.amount);
@@ -45,15 +57,21 @@ async function validate(tx: Tx, i: z.infer<typeof receiptSchema>, who: Principal
     if (!ca) throw badRequest("CASH_ACCOUNT_REQUIRED", "اختر الصندوق أو عهدة الشريك");
     if (ca.currency !== i.currency) throw badRequest("CASH_CURRENCY_MISMATCH", "عملة الصندوق يجب أن تطابق عملة السند");
   }
-  let alloc = d(0);
+  let alloc = d(0); let invCur: string = i.currency;
+  const invCurs = new Set<string>();
+  for (const a of i.allocations) { const [x] = await tx`SELECT currency FROM sales_invoices WHERE id = ${a.invoiceId}`; if (x) invCurs.add(x.currency as string); }
+  if (invCurs.size > 1) throw badRequest("MIXED_INVOICE_CURRENCIES", "لا يُخصَّص سند واحد على فواتير بعملتين مختلفتين");
+  if (invCurs.size === 1) invCur = [...invCurs][0]!;
+  const cross = invCur !== i.currency;
+  if (cross && (i.kind !== "CASH" || !i.settlementRate)) throw badRequest("SETTLEMENT_RATE_REQUIRED", `الفاتورة بعملة ${invCur} والقبض بعملة ${i.currency}: أدخل سعر التحويل (دينار لكل 1$) صراحةً`);
+  if (cross) { const sr = d(i.settlementRate!); if (sr.lt(1) || sr.gt(100000)) throw badRequest("RATE_OUT_OF_RANGE"); }
   for (const a of i.allocations) {
     const [inv] = await tx`SELECT customer_id, status, currency FROM sales_invoices WHERE id = ${a.invoiceId}`;
     if (!inv || inv.customer_id !== i.customerId || inv.status !== "POSTED") throw badRequest("BAD_ALLOCATION", "التخصيص على فاتورة مرحّلة لنفس العميل فقط");
-    if (inv.currency !== i.currency) throw badRequest("ALLOCATION_CURRENCY_MISMATCH", "عملة الفاتورة تخالف عملة السند");
     const ext = d(a.externalAmount ?? "0");
     if (ext.gt(0)) {                                              // profit already distributed outside the system: owner only, cash receipts in dinar only
       if (!who.isOwner) throw badRequest("EXTERNAL_PROFIT_OWNER_ONLY", "تسجيل الربح الموزَّع خارج النظام للمالك فقط");
-      if (i.kind !== "CASH" || i.currency !== "IQD") throw badRequest("EXTERNAL_PROFIT_IQD_CASH_ONLY", "الربح الخارجي يُسجَّل في سند قبض نقدي بالدينار فقط");
+      if (i.kind !== "CASH" || i.currency !== "IQD" || cross) throw badRequest("EXTERNAL_PROFIT_IQD_CASH_ONLY", "الربح الخارجي يُسجَّل في سند قبض نقدي بالدينار فقط");
     }
     if (ext.gt(0)) {                                              // "outside-distributed profit" is a NON-cash settlement of the receivable that stands for profit the partners already took: it can never exceed the profit the invoice has earned
       const prof = await invoiceProfit(tx, a.invoiceId), fin0 = await invoiceFinancials(tx, a.invoiceId);
@@ -63,7 +81,8 @@ async function validate(tx: Tx, i: z.infer<typeof receiptSchema>, who: Principal
     if (d(a.amount).plus(ext).gt((await invoiceFinancials(tx, a.invoiceId)).outstanding)) throw conflict("OVER_ALLOCATION", "المبلغ المخصص (المستحصل + الخارجي) يتجاوز المتبقي على الفاتورة");
     alloc = alloc.plus(a.amount);
   }
-  if (alloc.gt(amount)) throw badRequest("ALLOCATIONS_EXCEED_AMOUNT", "مجموع التخصيصات أكبر من المبلغ");
+  const usable = cross ? lowerBound(amount, i.currency, invCur, i.settlementRate!) : amount;       // what the money received can settle, in the invoice currency
+  if (alloc.gt(usable)) throw badRequest("ALLOCATIONS_EXCEED_AMOUNT", cross ? `المبلغ المقبوض يعادل ${usable} ${invCur} بسعر التحويل؛ مجموع التخصيصات أكبر` : "مجموع التخصيصات أكبر من المبلغ");
   if (i.kind === "CREDIT_APPLICATION") {
     if (!alloc.eq(amount)) throw badRequest("CREDIT_MUST_BE_ALLOCATED", "استخدام الرصيد الدائن يجب أن يُخصَّص بالكامل على فواتير");
   }
@@ -80,8 +99,8 @@ async function writeAllocs(tx: Tx, companyId: string, id: string, allocs: { invo
 export async function createReceipt(tx: Tx, who: Principal, actor: Actor, i: z.infer<typeof receiptSchema>) {
   await validate(tx, i, who);
   const rate = await resolveRate(tx, i.currency, i.docDate, i.exchangeRate ?? undefined);
-  const [r] = await tx`INSERT INTO customer_receipts(company_id, draft_ref, doc_date, kind, customer_id, cash_account_id, currency, exchange_rate_snapshot, amount, notes, created_by)
-    VALUES (${who.companyId}, ${draftRef()}, ${i.docDate}, ${i.kind}, ${i.customerId}, ${i.kind === "CASH" ? i.cashAccountId! : null}, ${i.currency}, ${rate}, ${i.amount}, ${i.notes ?? null}, ${who.userId}) RETURNING id, draft_ref AS "draftRef", version`;
+  const [r] = await tx`INSERT INTO customer_receipts(company_id, draft_ref, doc_date, kind, customer_id, cash_account_id, currency, exchange_rate_snapshot, settlement_rate, amount, notes, created_by)
+    VALUES (${who.companyId}, ${draftRef()}, ${i.docDate}, ${i.kind}, ${i.customerId}, ${i.kind === "CASH" ? i.cashAccountId! : null}, ${i.currency}, ${rate}, ${i.settlementRate ?? null}, ${i.amount}, ${i.notes ?? null}, ${who.userId}) RETURNING id, draft_ref AS "draftRef", version`;
   await writeAllocs(tx, who.companyId, r!.id, i.allocations);
   await audit(tx, actor, { action: "receipt.create_draft", entityType: "customer_receipt", entityId: r!.id, after: { amount: i.amount, kind: i.kind } });
   return r!;
@@ -109,22 +128,24 @@ export async function postReceipt(tx: Tx, who: Principal, actor: Actor, id: stri
   const [r] = await tx`SELECT * FROM customer_receipts WHERE id = ${id} FOR UPDATE`;
   if (!r) throw notFound();
   if (r.status !== "DRAFT") throw conflict("NOT_DRAFT");
-  const allRows = await tx`SELECT a.invoice_id, a.amount::text AS amount, a.external, a.note, si.exchange_rate_snapshot::text AS fx FROM receipt_allocations a JOIN sales_invoices si ON si.id = a.invoice_id WHERE a.receipt_id = ${id}`;
+  const allRows = await tx`SELECT a.invoice_id, a.amount::text AS amount, a.external, a.note, si.exchange_rate_snapshot::text AS fx, si.currency AS inv_cur FROM receipt_allocations a JOIN sales_invoices si ON si.id = a.invoice_id WHERE a.receipt_id = ${id}`;
   const allocs = allRows.filter((a) => !a.external), extRows = allRows.filter((a) => a.external);
   const byInv = new Map<string, { invoiceId: string; amount: string; externalAmount: string; externalNote: string | null }>();
   for (const a of allRows) { const e = byInv.get(a.invoice_id as string) ?? { invoiceId: a.invoice_id as string, amount: "0", externalAmount: "0", externalNote: null }; if (a.external) { e.externalAmount = a.amount as string; e.externalNote = a.note as string | null; } else e.amount = a.amount as string; byInv.set(a.invoice_id as string, e); }
-  await validate(tx, { customerId: r.customer_id, docDate: dateOf(r.doc_date), kind: r.kind, cashAccountId: r.cash_account_id, currency: r.currency, amount: r.amount, allocations: [...byInv.values()] } as z.infer<typeof receiptSchema>, who);
+  await validate(tx, { customerId: r.customer_id, docDate: dateOf(r.doc_date), kind: r.kind, cashAccountId: r.cash_account_id, currency: r.currency, amount: r.amount, settlementRate: r.settlement_rate as string | null, allocations: [...byInv.values()] } as z.infer<typeof receiptSchema>, who);
   const date = dateOf(r.doc_date), fx = r.exchange_rate_snapshot as string, cur = r.currency as string;
   const docNo = (r.doc_no as string | null) ?? (await tx`SELECT next_document_number(${who.companyId}, 'customer_receipt', ${yearOf(date)}) AS n`)[0]!.n as string;   // an amended receipt keeps its number
   let arBase = d(0), allocated = d(0);
-  for (const a of allocs) { arBase = arBase.plus(toBase(a.amount, a.fx, cur)); allocated = allocated.plus(a.amount); }
-  const rest = d(r.amount).minus(allocated), creditBase = rest.gt(0) ? toBase(rest, fx, cur) : d(0);
+  const invCur = (allRows[0]?.inv_cur as string | undefined) ?? cur;                                     // all invoices of one receipt share a currency (validated)
+  for (const a of allocs) { arBase = arBase.plus(toBase(a.amount, a.fx, invCur)); allocated = allocated.plus(a.amount); }
+  const usedReceived = invCur === cur || allocated.isZero() ? allocated : convertSettlement(allocated, invCur, cur, r.settlement_rate);      // money received that went to the invoices (explicit rate stored on the receipt)
+  const rest = d(r.amount).minus(usedReceived), creditBase = rest.gt(0) ? toBase(rest, fx, cur) : d(0);
   const jl: JLine[] = []; let cashBase = d(0), fxDiff = d(0);
   if (r.kind === "CASH") {
     cashBase = toBase(r.amount, fx, cur); fxDiff = cashBase.minus(arBase).minus(creditBase);          // + = received more dinars than booked (gain)
     const [ca] = await tx`SELECT ca.id, a.code FROM cash_accounts ca JOIN accounts a ON a.id = ca.account_id WHERE ca.id = ${r.cash_account_id}`;
     jl.push({ account: ca!.code, debit: cashBase, currency: cur, amountOrig: r.amount, fx });
-    if (arBase.gt(0)) jl.push({ account: "1200", credit: arBase, currency: cur, amountOrig: allocated, fx, contactId: r.customer_id });
+    if (arBase.gt(0)) jl.push({ account: "1200", credit: arBase, currency: invCur, amountOrig: allocated, fx: allocated.gt(0) ? arBase.div(allocated).toDecimalPlaces(8).toString() : "1", contactId: r.customer_id });
     if (creditBase.gt(0)) jl.push({ account: "2400", credit: creditBase, currency: cur, amountOrig: rest, fx, contactId: r.customer_id });
     if (fxDiff.gt(0)) jl.push({ account: "7100", credit: fxDiff, memo: "ربح فرق صرف محقق" });
     if (fxDiff.lt(0)) jl.push({ account: "7100", debit: fxDiff.abs(), memo: "خسارة فرق صرف محققة" });
@@ -184,7 +205,7 @@ export async function amendReceipt(tx: Tx, who: Principal, actor: Actor, id: str
   await validate(tx, i, who);
   const rate = await resolveRate(tx, i.currency, i.docDate, i.exchangeRate ?? undefined);
   await tx`UPDATE customer_receipts SET doc_date = ${i.docDate}, kind = ${i.kind}, customer_id = ${i.customerId}, cash_account_id = ${i.kind === "CASH" ? i.cashAccountId! : null}, currency = ${i.currency},
-      exchange_rate_snapshot = ${rate}, amount = ${i.amount}, notes = ${i.notes ?? null}, updated_at = now() WHERE id = ${id}`;
+      exchange_rate_snapshot = ${rate}, settlement_rate = ${i.settlementRate ?? null}, amount = ${i.amount}, notes = ${i.notes ?? null}, updated_at = now() WHERE id = ${id}`;
   await writeAllocs(tx, who.companyId, id, i.allocations);
   const h = await postReceipt(tx, who, actor, id);
   await audit(tx, actor, { action: "receipt.amend", entityType: "customer_receipt", entityId: id, before: { amount: r.amount, docNo: r.doc_no }, after: { amount: i.amount } });
@@ -302,4 +323,35 @@ export async function getCashTransfer(tx: Tx, id: string) {
     FROM cash_transfers t JOIN cash_accounts f ON f.id = t.from_account_id JOIN cash_accounts o ON o.id = t.to_account_id WHERE t.id = ${id}`;
   if (!t) throw notFound();
   return t;
+}
+
+// =========================== collect from the invoice screen: ONE atomic, idempotent action ===========================
+export const collectSchema = z.object({
+  requestId: z.string().min(8).max(120), docDate: dateStr, cashAccountId: uuid, currency: currencyCode, exchangeRate: rateStr.nullish(), settlementRate: rateStr.nullish(),
+  amount: moneyStr, externalAmount: moneyStr.default("0"), externalNote: z.string().max(300).nullish(), notes: z.string().max(500).nullish(),
+});
+/**
+ * Create + post the receipt allocated to THIS invoice in one transaction. Same invoice, same customer, remaining pre-checked by the receipt validation.
+ * `amount` is the money received (in the cash account's currency); `allocated` (invoice currency) is derived: same currency => the amount, otherwise through the explicit settlementRate.
+ * Retrying with the same requestId returns the first result and never creates a second receipt.
+ */
+export async function collectOnInvoice(tx: Tx, who: Principal, actor: Actor, invoiceId: string, i: z.infer<typeof collectSchema>) {
+  const { once } = await import("../idempotency");
+  return once(tx, who, i.requestId, `collect:${invoiceId}`, async () => {
+    const [inv] = await tx`SELECT customer_id, currency, status FROM sales_invoices WHERE id = ${invoiceId} FOR UPDATE`;
+    if (!inv) throw notFound();
+    if (inv.status !== "POSTED") throw conflict("INVOICE_NOT_POSTED", "اعتمد الفاتورة أولاً ثم سجّل التسديد");
+    const outstanding = d((await invoiceFinancials(tx, invoiceId)).outstanding);
+    if (outstanding.lte(0)) throw conflict("ALREADY_SETTLED", "الفاتورة مسدَّدة بالكامل");
+    const received = d(i.amount); const same = inv.currency === i.currency;
+    if (!same && !i.settlementRate) throw badRequest("SETTLEMENT_RATE_REQUIRED", `الفاتورة بعملة ${inv.currency} والقبض بعملة ${i.currency}: أدخل سعر التحويل صراحةً`);
+    const settled = same ? received : convertSettlement(received, i.currency, inv.currency as string, i.settlementRate!);
+    const ext = d(i.externalAmount ?? "0");
+    const applied = Decimal.min(settled, outstanding.minus(ext));                                 // never above what is still owed
+    const rec = await createReceipt(tx, who, actor, { customerId: inv.customer_id as string, docDate: i.docDate, kind: "CASH", cashAccountId: i.cashAccountId, currency: i.currency, exchangeRate: i.exchangeRate, settlementRate: same ? null : i.settlementRate,
+      amount: i.amount, notes: i.notes ?? null, allocations: [{ invoiceId, amount: applied.toString(), externalAmount: i.externalAmount ?? "0", externalNote: i.externalNote ?? null }] });
+    const posted = await postReceipt(tx, who, actor, rec.id as string);
+    const after = await invoiceFinancials(tx, invoiceId);
+    return { receiptId: rec.id as string, docNo: posted.docNo as string, applied: applied.toString(), surplusToCredit: settled.gt(applied) ? settled.minus(applied).toString() : "0", outstanding: after.outstanding, status: d(after.outstanding).isZero() ? "PAID" : "PARTIAL" };
+  });
 }
