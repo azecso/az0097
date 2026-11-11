@@ -1,6 +1,7 @@
 import { z } from "zod";
 import Decimal from "decimal.js";
 import type { Tx } from "../db";
+import { reverseCashMovements } from "./cash";
 import { audit, type Actor } from "../audit";
 import type { Principal } from "../authz";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
@@ -208,8 +209,7 @@ export async function reversePurchase(tx: Tx, who: Principal, actor: Actor, id: 
   const today = new Date().toISOString().slice(0, 10);
   if (!(await retireLots(tx, who.companyId, "purchase_order", id, new Date()))) throw conflict("PURCHASE_LOT_CONSUMED", "جزء من البضاعة بيع أو نُقل؛ اعكس تلك الحركات أولاً");
   await reverseEntry(tx, actor, po.journal_entry_id, today, `عكس فاتورة شراء ${po.doc_no}: ${reason}`);
-  if (po.payment_type === "CASH") await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id)
-      SELECT company_id, cash_account_id, abs(amount), abs(amount_base), 'purchase_order', doc_id FROM cash_movements WHERE doc_type = 'purchase_order' AND doc_id = ${id} AND amount < 0`;
+  if (po.payment_type === "CASH") await reverseCashMovements(tx, "purchase_order", id);
   await tx`UPDATE purchase_orders SET status = 'REVERSED', version = version + 1, updated_at = now() WHERE id = ${id}`;
   await audit(tx, actor, { action: "purchase.reverse", entityType: "purchase_order", entityId: id, reason });
   return { id, status: "REVERSED" };

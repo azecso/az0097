@@ -1,6 +1,7 @@
 import { z } from "zod";
 import Decimal from "decimal.js";
 import type { Tx } from "../db";
+import { reverseCashMovements } from "./cash";
 import { audit, type Actor } from "../audit";
 import type { Principal } from "../authz";
 import { badRequest, conflict, notFound } from "../errors";
@@ -107,7 +108,7 @@ export async function reverseExpense(tx: Tx, who: Principal, actor: Actor, id: s
   if (e.status !== "POSTED") throw conflict("NOT_POSTED");
   if ((await tx`SELECT 1 FROM expense_payments WHERE expense_id = ${id} AND status = 'POSTED'`).length) throw conflict("HAS_PAYMENTS", "توجد دفعات مرحّلة؛ اعكسها أولاً");
   await reverseEntry(tx, actor, e.journal_entry_id, new Date().toISOString().slice(0, 10), `عكس مصروف ${e.doc_no}: ${reason}`);
-  if (e.payment_mode === "PAID_CASH") await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id) SELECT company_id, cash_account_id, abs(amount), abs(amount_base), 'expense', doc_id FROM cash_movements WHERE doc_type = 'expense' AND doc_id = ${id} AND amount < 0`;
+  if (e.payment_mode === "PAID_CASH") await reverseCashMovements(tx, "expense", id);
   await tx`UPDATE expenses SET status = 'REVERSED', version = version + 1, updated_at = now() WHERE id = ${id}`;
   await audit(tx, actor, { action: "expense.reverse", entityType: "expense", entityId: id, reason });
   return { id, status: "REVERSED" };
@@ -144,7 +145,7 @@ export async function reverseExpensePayment(tx: Tx, who: Principal, actor: Actor
   if (!p) throw notFound();
   if (p.status !== "POSTED") throw conflict("NOT_POSTED");
   await reverseEntry(tx, actor, p.journal_entry_id, new Date().toISOString().slice(0, 10), `عكس سداد ${p.doc_no}: ${reason}`);
-  await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id) SELECT company_id, cash_account_id, abs(amount), abs(amount_base), 'expense_payment', doc_id FROM cash_movements WHERE doc_type = 'expense_payment' AND doc_id = ${id} AND amount < 0`;
+  await reverseCashMovements(tx, "expense_payment", id);
   await tx`UPDATE expense_payments SET status = 'REVERSED', version = version + 1, updated_at = now() WHERE id = ${id}`;
   await audit(tx, actor, { action: "expense_payment.reverse", entityType: "expense_payment", entityId: id, reason });
   return { id, status: "REVERSED" };
@@ -233,7 +234,7 @@ export async function reversePayrollPayment(tx: Tx, who: Principal, actor: Actor
   if (p.status !== "POSTED") throw conflict("NOT_POSTED");
   const je = (await tx`SELECT id FROM journal_entries WHERE source_doc_type = 'payroll_payment' AND source_doc_id = ${id} AND reverses_entry_id IS NULL`)[0]!.id as string;
   await reverseEntry(tx, actor, je, new Date().toISOString().slice(0, 10), `عكس دفع راتب ${p.doc_no}: ${reason}`);
-  await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id) SELECT company_id, cash_account_id, abs(amount), abs(amount_base), 'payroll_payment', doc_id FROM cash_movements WHERE doc_type = 'payroll_payment' AND doc_id = ${id} AND amount < 0`;
+  await reverseCashMovements(tx, "payroll_payment", id);
   await tx`UPDATE payroll_payments SET status = 'REVERSED', version = version + 1, updated_at = now() WHERE id = ${id}`;
   await audit(tx, actor, { action: "payroll.reverse_payment", entityType: "payroll_payment", entityId: id, reason });
   return { id, status: "REVERSED" };

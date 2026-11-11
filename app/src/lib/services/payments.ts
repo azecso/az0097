@@ -1,6 +1,7 @@
 import { z } from "zod";
 import Decimal from "decimal.js";
 import type { Tx } from "../db";
+import { reverseCashMovements } from "./cash";
 import { audit, type Actor } from "../audit";
 import type { Principal } from "../authz";
 import { badRequest, conflict, notFound } from "../errors";
@@ -102,8 +103,7 @@ export async function reversePayment(tx: Tx, who: Principal, actor: Actor, id: s
   if (!p) throw notFound();
   if (p.status !== "POSTED") throw conflict("NOT_POSTED");
   await reverseEntry(tx, actor, p.journal_entry_id, new Date().toISOString().slice(0, 10), `عكس سند صرف ${p.doc_no}: ${reason}`);
-  await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id)
-    SELECT company_id, cash_account_id, abs(amount), abs(amount_base), 'supplier_payment', doc_id FROM cash_movements WHERE doc_type = 'supplier_payment' AND doc_id = ${id} AND amount < 0`;
+  await reverseCashMovements(tx, "supplier_payment", id);
   await tx`UPDATE supplier_payments SET status = 'REVERSED', version = version + 1, updated_at = now() WHERE id = ${id}`;
   await audit(tx, actor, { action: "supplier_payment.reverse", entityType: "supplier_payment", entityId: id, reason });
   return { id, status: "REVERSED" };

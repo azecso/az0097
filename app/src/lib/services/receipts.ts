@@ -1,6 +1,7 @@
 import { z } from "zod";
 import Decimal from "decimal.js";
 import type { Tx } from "../db";
+import { reverseCashMovements } from "./cash";
 import { audit, type Actor } from "../audit";
 import type { Principal } from "../authz";
 import { badRequest, conflict, notFound } from "../errors";
@@ -187,8 +188,7 @@ export async function unpostReceipt(tx: Tx, actor: Actor, id: string, reason: st
   const [r] = await tx`SELECT * FROM customer_receipts WHERE id = ${id} FOR UPDATE`;
   if (!r || r.status !== "POSTED") throw conflict("NOT_POSTED");
   await reverseEntry(tx, actor, r.journal_entry_id, new Date().toISOString().slice(0, 10), `${reason} ${r.doc_no}`);
-  if (r.kind === "CASH") await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id)
-    SELECT company_id, cash_account_id, -amount, -amount_base, 'customer_receipt', doc_id FROM cash_movements WHERE doc_type = 'customer_receipt' AND doc_id = ${id} AND amount > 0`;
+  if (r.kind === "CASH") await reverseCashMovements(tx, "customer_receipt", id);
   await tx`SELECT set_config('app.amend', 'on', true)`;
   await tx`UPDATE customer_receipts SET status = 'DRAFT', version = version + 1, updated_at = now() WHERE id = ${id}`;
 }
@@ -233,8 +233,7 @@ export async function reverseReceiptCore(tx: Tx, who: Principal, actor: Actor, i
   if (!r) throw notFound();
   if (r.status !== "POSTED") throw conflict("NOT_POSTED");
   await reverseEntry(tx, actor, r.journal_entry_id, new Date().toISOString().slice(0, 10), `عكس سند قبض ${r.doc_no}: ${reason}`);
-  if (r.kind === "CASH") await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id)
-    SELECT company_id, cash_account_id, -amount, -amount_base, 'customer_receipt', doc_id FROM cash_movements WHERE doc_type = 'customer_receipt' AND doc_id = ${id} AND amount > 0`;
+  if (r.kind === "CASH") await reverseCashMovements(tx, "customer_receipt", id);
   await tx`UPDATE customer_receipts SET status = 'REVERSED', version = version + 1, updated_at = now() WHERE id = ${id}`;
   await audit(tx, actor, { action: "receipt.reverse", entityType: "customer_receipt", entityId: id, reason });
   return { id, status: "REVERSED" };

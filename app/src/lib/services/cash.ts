@@ -66,3 +66,13 @@ export async function createCashAccount(tx: Tx, who: Principal, actor: Actor, i:
   await audit(tx, actor, { action: "cash_account.create", entityType: "cash_account", entityId: c!.id, after: { ...i, code } });
   return { id: c!.id as string, code };
 }
+
+/**
+ * Undo a document's cash effect: inserts, per cash account, the OPPOSITE of the document's NET cash movement so far (sum of everything already recorded for it).
+ * Never mirrors individual old rows — a document that was already corrected (+100, -100, +80) reverses only the live +80, never the old +100 a second time.
+ */
+export async function reverseCashMovements(tx: Tx, docType: string, docId: string) {
+  await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id)
+    SELECT company_id, cash_account_id, -sum(amount), -sum(amount_base), doc_type, doc_id FROM cash_movements WHERE doc_type = ${docType} AND doc_id = ${docId}
+    GROUP BY company_id, cash_account_id, doc_type, doc_id HAVING sum(amount) <> 0 OR sum(amount_base) <> 0`;
+}

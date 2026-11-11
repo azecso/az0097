@@ -1,6 +1,7 @@
 import { z } from "zod";
 import Decimal from "decimal.js";
 import type { Tx } from "../db";
+import { reverseCashMovements } from "./cash";
 import { audit, type Actor } from "../audit";
 import type { Principal } from "../authz";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
@@ -453,8 +454,7 @@ export async function reverseSalesReturn(tx: Tx, who: Principal, actor: Actor, i
   if (r.status !== "POSTED") throw conflict("NOT_POSTED");
   await undoReturnRestock(tx, who.companyId, id, new Date());
   await reverseEntry(tx, actor, r.journal_entry_id, new Date().toISOString().slice(0, 10), `عكس مرتجع ${r.doc_no}: ${reason}`);
-  if (d(r.refund_orig).gt(0)) await tx`INSERT INTO cash_movements(company_id, cash_account_id, amount, amount_base, doc_type, doc_id)
-    SELECT company_id, cash_account_id, abs(amount), abs(amount_base), 'sales_return', doc_id FROM cash_movements WHERE doc_type = 'sales_return' AND doc_id = ${id} AND amount < 0`;
+  if (d(r.refund_orig).gt(0)) await reverseCashMovements(tx, "sales_return", id);
   await tx`UPDATE sales_returns SET status = 'REVERSED', version = version + 1, updated_at = now() WHERE id = ${id}`;
   await audit(tx, actor, { action: "sales_return.reverse", entityType: "sales_return", entityId: id, reason });
   return { id, status: "REVERSED" };
