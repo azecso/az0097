@@ -4,7 +4,7 @@ import { api } from "@/lib/client";
 import { useLoad } from "@/components/ui";
 
 const PHRASE = "تصفير كل البيانات";
-interface Prep { file: string; sha256: string; bytes: number; attachments: number; rows: Record<string, number> }
+interface Prep { file: string; sha256: string; bytes: number; attachments: number; missingFiles?: string[]; rows: Record<string, number> }
 export default function ResetPage() {
   const st = useLoad<{ enabled: boolean } | null>("/api/settings/reset", null).data;
   const [prep, setPrep] = useState<Prep | null>(null), [phrase, setPhrase] = useState(""), [code, setCode] = useState(""), [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null), [busy, setBusy] = useState(false);
@@ -25,6 +25,7 @@ export default function ResetPage() {
     <div className="card"><h2>1) أنشئ نسخة كاملة موثّقة</h2>
       <p>تُحفظ على الخادم وتُقرأ للتحقق منها، وتشمل كل السجلات والمرفقات. أي عملية تحدث بعدها تُبطل النسخة وتلزم نسخة جديدة. لا تعتمد على هذه النسخة وحدها: يبقى النسخ التشغيلي الدوري (ops/backup.sh) هو الأساس.</p>
       <button className="primary" onClick={prepare} disabled={busy || !st?.enabled}>إنشاء النسخة</button>
+      {prep && (prep.missingFiles?.length ?? 0) > 0 && <div className="msg err" role="alert">تنبيه: {prep.missingFiles!.length} ملف مرفق مسجَّل في النظام لكنه غير موجود أصلاً على الخادم (ضاع قبل هذه النسخة)، فلا يمكن نسخه. بقيت بياناته الأخرى في النسخة. المتابعة تحذف سجلات هذه المرفقات مع بقية البيانات.</div>}
       {prep && <p>✔ {prep.file} — {rows} سجل، {prep.attachments} مرفق، {Math.floor(prep.bytes / 1024)} KB — <a href={`/api/settings/reset/download?file=${encodeURIComponent(prep.file)}`}>تنزيل نسخة على جهازك</a></p>}</div>
     <div className="card"><h2>2) أكّد</h2>
       <label htmlFor="ph">اكتب العبارة: <b>{PHRASE}</b></label><input id="ph" value={phrase} onChange={(e) => setPhrase(e.target.value)} autoComplete="off" />

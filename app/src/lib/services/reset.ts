@@ -21,20 +21,20 @@ export const WIPED_TABLES = ["accounting_periods", "capital_returns", "capital_t
 /** Included in the export besides the wiped tables: rows that are kept but that a restore must put back (numbering, uploaded files' metadata). */
 export const EXTRA_EXPORT_TABLES = ["attachments", "document_sequences"] as const;
 
-export interface ExportFile { kind: "full-export"; version: 2; createdAt: string; companyId: string; tables: Record<string, unknown[]>; attachments: { storageName: string; companyId: string; sha256: string; dataBase64: string }[] }
+export interface ExportFile { kind: "full-export"; version: 2; createdAt: string; companyId: string; tables: Record<string, unknown[]>; attachments: { storageName: string; companyId: string; sha256: string; dataBase64: string }[]; missingFiles?: string[] }
 
 /** A complete, restorable snapshot: every row of every table the reset touches, plus the uploaded files themselves. Restore: scripts/restore-export.ts. */
 export async function buildExport(tx: Tx, companyId: string): Promise<ExportFile> {
   const tables: Record<string, unknown[]> = {};
   for (const t of [...WIPED_TABLES, ...EXTRA_EXPORT_TABLES]) tables[t] = (await tx.unsafe(`SELECT to_jsonb(x) AS r FROM ${t} x ORDER BY ctid`)).map((r) => r.r);
-  const att: ExportFile["attachments"] = []; let total = 0;
+  const att: ExportFile["attachments"] = []; const missing: string[] = []; let total = 0;
   for (const a of (await tx`SELECT storage_name, company_id, sha256 FROM attachments`) as unknown as { storage_name: string; company_id: string; sha256: string }[]) {
     const buf = await readFile(join(uploadDir(), a.company_id, a.storage_name)).catch(() => null);
-    if (!buf) throw conflict("ATTACHMENT_FILE_MISSING", `ملف المرفق ${a.storage_name} غير موجود على الخادم؛ لا يمكن إنشاء نسخة كاملة`);
+    if (!buf) { missing.push(a.storage_name); continue; }                  // the file is already gone from the server disk (e.g. a host that wipes uploads on redeploy): nothing to copy; the row is still exported and the loss is reported, not hidden
     total += buf.length; if (total > MAX_EXPORT_BYTES()) throw conflict("EXPORT_TOO_LARGE", "حجم المرفقات يتجاوز حد النسخة داخل النظام؛ خذ نسخة تشغيلية (ops/backup.sh) قبل التصفير");
     att.push({ storageName: a.storage_name, companyId: a.company_id, sha256: a.sha256, dataBase64: buf.toString("base64") });
   }
-  return { kind: "full-export", version: 2, createdAt: new Date().toISOString(), companyId, tables, attachments: att };
+  return { kind: "full-export", version: 2, createdAt: new Date().toISOString(), companyId, tables, attachments: att, missingFiles: missing };
 }
 
 const sha256 = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
@@ -49,9 +49,9 @@ export async function prepareReset(tx: Tx, a: Actor) {
   const back = await readFile(file);                                                   // read it back: the copy only counts if it is intact
   if (back.length !== body.length || sha256(back) !== sha256(body)) throw new AppError(500, "EXPORT_VERIFY_FAILED", "فشل التحقق من ملف النسخة؛ لم يُحذف شيء");
   const rows = Object.fromEntries(Object.entries(exp.tables).map(([k, v]) => [k, v.length]));
-  await audit(tx, a, { action: "DATA_RESET_PREPARED", entityType: "company", entityId: a.companyId, after: { file: name, sha256: sha256(body), bytes: body.length, attachments: exp.attachments.length, rows } });
+  await audit(tx, a, { action: "DATA_RESET_PREPARED", entityType: "company", entityId: a.companyId, after: { file: name, sha256: sha256(body), bytes: body.length, attachments: exp.attachments.length, missingFiles: exp.missingFiles ?? [], rows } });
   const [au] = await tx`SELECT max(id)::text AS id FROM audit_logs`;
-  return { file: name, sha256: sha256(body), bytes: body.length, attachments: exp.attachments.length, rows, auditId: au!.id as string };
+  return { file: name, sha256: sha256(body), bytes: body.length, attachments: exp.attachments.length, missingFiles: exp.missingFiles ?? [], rows, auditId: au!.id as string };
 }
 
 export async function resetStatus(tx: Tx) {

@@ -38,6 +38,15 @@ describe("owner data reset: isolated, backed up first, restorable", () => {
     await w.api(w.owner, w.R.contacts.POST, { method: "POST", body: { kind: "CUSTOMER", code: "LATE", name: "بعد النسخة" } });
     expect((await api(w.owner, { action: "reset", phrase: PH })).body.error.code).toBe("DATA_CHANGED_SINCE_BACKUP");
   });
+  it("an attachment row whose file is already gone does not block the copy: it is reported, the rest is copied", async () => {
+    const [row] = await w.env.admin`SELECT * FROM attachments LIMIT 1`;
+    const ghost = { ...row, id: crypto.randomUUID(), storage_name: "gone-file.png" };
+    await w.env.admin`INSERT INTO attachments SELECT * FROM jsonb_populate_record(null::attachments, ${JSON.stringify(ghost)}::text::jsonb)`;
+    try {
+      const p = await api(w.owner, { action: "prepare" }); expect(p.status).toBe(200);
+      expect(p.body.missingFiles).toEqual(["gone-file.png"]); expect(p.body.attachments).toBe(1); expect(p.body.rows.attachments).toBeGreaterThanOrEqual(2);
+    } finally { await w.env.admin`DELETE FROM attachments WHERE id = ${ghost.id}`; }
+  });
   let backup = "";
   it("wipes entries and parties, keeps settings, restarts numbering, removes the files, records the audit entry; ledger balanced", async () => {
     backup = (await api(w.owner, { action: "prepare" })).body.file;
