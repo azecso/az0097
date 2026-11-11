@@ -50,7 +50,7 @@ const BASE = process.env.E2E_BASE || "http://localhost:3100";
   await p.keyboard.press("Escape");
   // ---- edit after posting from the receipts list
   const rl = await call("GET", "/api/customer-receipts"); const usdR = rl.find((r) => r.currency === "USD" && r.status === "POSTED");
-  await p.goto(BASE + "/sales/receipts?edit=" + usdR.id); await p.waitForSelector("#ud-u"); ok("editing a posted dollar receipt opens the same dialog prefilled", (await p.inputValue("#ud-u")) !== "");
+  await p.goto(BASE + "/sales/receipts?edit=" + usdR.id); await p.waitForSelector("#ud-u"); await p.waitForFunction(() => document.querySelector("#ud-u").value !== "", null, { timeout: 15000 }); ok("editing a posted dollar receipt opens the same dialog prefilled", (await p.inputValue("#ud-u")) !== "");
   await p.fill("#ud-u", "110"); await p.click("button:has-text('تأكيد القبض')");
   if (await p.locator("[role=alertdialog]").count()) await p.click("button:has-text('تأكيد القبض وتصفير المتبقي')");
   await p.waitForURL(BASE + "/sales/receipts"); const rl2 = await call("GET", "/api/customer-receipts"); ok("same number, new dollar amount", rl2.find((r) => r.id === usdR.id)?.docNo === usdR.docNo && Number(rl2.find((r) => r.id === usdR.id).amount) === 110);

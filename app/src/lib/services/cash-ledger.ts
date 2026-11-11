@@ -6,12 +6,12 @@ import { d } from "../money";
 export const SOURCE_LABEL: Record<string, string> = {
   customer_receipt: "سند قبض من عميل", capital: "رأس مال", purchase_order: "فاتورة شراء نقدية", supplier_payment: "سند صرف لمورد", sales_return: "مرتجع مبيعات",
   purchase_return: "مرتجع مشتريات", expense: "مصروف", expense_payment: "سداد مصروف", payroll_payment: "سداد راتب", personal_advance: "سحب/سداد شخصي",
-  profit_payout: "توزيع أرباح", cash_transfer: "تحويل بين الصناديق", opening: "رصيد افتتاحي",
+  profit_payout: "توزيع أرباح", cash_transfer: "تحويل بين الصناديق", customer_refund: "ردّ نقد لعميل", opening: "رصيد افتتاحي",
 };
 const TABLE: Record<string, string> = {
   customer_receipt: "customer_receipts", capital: "capital_transactions", purchase_order: "purchase_orders", supplier_payment: "supplier_payments", sales_return: "sales_returns",
   purchase_return: "purchase_returns", expense: "expenses", expense_payment: "expense_payments", payroll_payment: "payroll_payments", personal_advance: "personal_advances",
-  profit_payout: "profit_payouts", cash_transfer: "cash_transfers",
+  profit_payout: "profit_payouts", cash_transfer: "cash_transfers", customer_refund: "customer_refunds",
 };
 export interface LedgerFilter { accountId?: string; from?: string; to?: string }
 

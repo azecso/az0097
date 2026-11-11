@@ -28,7 +28,7 @@ export async function postJournal(tx: Tx, actor: Actor, e: {
   for (const c of codes) if (!byCode.has(c)) throw badRequest("ACCOUNT_NOT_FOUND", c);
   await tx`SELECT pg_advisory_xact_lock_shared(hashtext(${actor.companyId + ":period:" + e.date.slice(0, 7)}))`;       // a concurrent close of this month waits for us (and we see it once it commits)
   const closed = await tx`SELECT 1 FROM accounting_periods WHERE period_month = date_trunc('month', ${e.date}::date)::date AND status = 'CLOSED'`;
-  if (closed.length) throw conflict("PERIOD_CLOSED", `الفترة المحاسبية ${e.date.slice(0, 7)} مقفلة؛ لا يمكن الترحيل فيها`);
+  if (closed.length) throw conflict("PERIOD_CLOSED", `الفترة المحاسبية ${e.date.slice(0, 7)} مقفلة، فلا يُرحَّل فيها ولا يُصحَّح مستند بتاريخها. المسار المسموح: (1) المالك يعيد فتح الفترة من «الفترات المحاسبية» بسبب مكتوب (يُحفظ في التدقيق) ثم يُجرى التصحيح ثم تُقفل من جديد؛ أو (2) سجّل مستنداً تصحيحياً (مرتجع/سند جديد/قيد عكسي) بتاريخ في فترة مفتوحة، فتبقى الفترة المقفلة كما أُقفلت.`);
   const [no] = await tx`SELECT next_document_number(${actor.companyId}, 'journal_entry', ${yearOf(e.date)}) AS n`;
   const [je] = await tx`INSERT INTO journal_entries(company_id, entry_no, entry_date, source_doc_type, source_doc_id, reverses_entry_id, memo, posted_by)
     VALUES (${actor.companyId}, ${no!.n}, ${e.date}, ${e.sourceDocType}, ${e.sourceDocId}, ${e.reversesEntryId ?? null}, ${e.memo ?? null}, ${actor.userId}) RETURNING id`;
