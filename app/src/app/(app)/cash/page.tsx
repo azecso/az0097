@@ -16,6 +16,11 @@ export default function Cash() {
   return (<><h1>النقدية والعهدة</h1>
     <div className="grid">{acc.data.map((a) => <div className="card stat" key={a.id}><div className="label">{a.name} — {KIND[a.kind]}</div><div className="value"><span className="num">{money(a.balance)}</span> <small>{a.currency}</small></div>
       {!a.countsTowardAvailable && <span className="badge">لا تُحتسب ضمن النقد المتاح</span>}</div>)}</div>
+    {me.user.isOwner && <form className="card row" style={{ marginTop: 12 }} onSubmit={(e) => { e.preventDefault(); const f = new FormData(e.currentTarget); void run(() => api("/api/cash-accounts", { method: "POST", body: { name: String(f.get("name")), currency: String(f.get("cur")), kind: String(f.get("kind")) } }), "أُضيف الحساب"); }}>
+      <div><label htmlFor="cn">حساب جديد (صندوق / مصرف / عهدة)</label><input id="cn" name="name" required /></div>
+      <div><label htmlFor="cc">العملة</label><select id="cc" name="cur"><option>IQD</option><option>USD</option></select></div>
+      <div><label htmlFor="ck">النوع</label><select id="ck" name="kind"><option value="BANK">حساب مصرفي</option><option value="MAIN_CASH">صندوق</option><option value="PARTNER_CUSTODY">عهدة الشريك</option></select></div>
+      <button className="primary" disabled={busy}>إضافة حساب</button></form>}
     {can(me, "voucher:create") && <form className="card row" onSubmit={create} style={{ marginTop: 12 }}>
       <div><label htmlFor="f">من</label><select id="f" name="from">{acc.data.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div>
       <div><label htmlFor="t">إلى</label><select id="t" name="to">{acc.data.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div>

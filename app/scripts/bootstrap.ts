@@ -7,7 +7,7 @@ import { hashPassword, assertStrongPassword } from "../src/lib/auth";
 
 const ACCOUNTS: Array<[string, string, string, "DEBIT" | "CREDIT", boolean?]> = [
   ["1110", "الصندوق الرئيسي IQD", "ASSET", "DEBIT"], ["1120", "الصندوق الرئيسي USD", "ASSET", "DEBIT"],
-  ["1130", "حساب مصرفي", "ASSET", "DEBIT"], ["1150", "عهدة نقدية — الشريك", "ASSET", "DEBIT"],
+  ["1130", "حساب مصرفي", "ASSET", "DEBIT"], ["1150", "عهدة نقدية — الشريك", "ASSET", "DEBIT"], ["1151", "عهدة نقدية — الشريك USD", "ASSET", "DEBIT"],
   ["1200", "ذمم العملاء", "ASSET", "DEBIT"], ["1250", "سلف الشريك", "ASSET", "DEBIT"],
   ["1300", "مخزون — الموقع الرئيسي", "ASSET", "DEBIT"], ["1310", "مخزون — بعهدة الشريك", "ASSET", "DEBIT"],
   ["1390", "مشتريات تحت التسوية", "ASSET", "DEBIT"],

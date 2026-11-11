@@ -1,7 +1,10 @@
 import type { Tx } from "../db";
 import Decimal from "decimal.js";
 import { d } from "../money";
-import { conflict, badRequest } from "../errors";
+import { z } from "zod";
+import { audit, type Actor } from "../audit";
+import type { Principal } from "../authz";
+import { conflict, badRequest, forbidden } from "../errors";
 
 /** Cash account balance in the ACCOUNT'S currency, from the general ledger (single source of truth). */
 export async function cashBalance(tx: Tx, cashAccountId: string) {
@@ -50,3 +53,16 @@ export async function distributableLiquidity(tx: Tx, horizonDays = 30) {
   return { cash: cashAll, committed: committedAll, available, accruedLiabilities: accrued.toString(), suppliersDue: suppliers.toString(), customerCredits: credits.toString(), byCurrency };
 }
 const Decimal0 = (v: string | { toString(): string }) => { const x = d(v.toString()); return x.isNegative() ? d(0) : x; };
+
+/** New cash account / bank / custody in a currency (owner only). It gets its own ledger account (next free code in 1130–1199) so balances never mix. */
+export const cashAccountSchema = z.object({ name: z.string().min(2).max(80), currency: z.enum(["IQD", "USD"]), kind: z.enum(["MAIN_CASH", "BANK", "PARTNER_CUSTODY"]) });
+export async function createCashAccount(tx: Tx, who: Principal, actor: Actor, i: z.infer<typeof cashAccountSchema>) {
+  if (!who.isOwner) throw forbidden("OWNER_ONLY");
+  const used = new Set((await tx`SELECT code FROM accounts WHERE code ~ '^11[3-9][0-9]$'`).map((r) => r.code as string));
+  let code = ""; for (let n = 1130; n <= 1199; n++) if (!used.has(String(n)) && n !== 1150 && n !== 1151) { code = String(n); break; }
+  if (!code) throw conflict("NO_FREE_ACCOUNT_CODE");
+  const [a] = await tx`INSERT INTO accounts(company_id, code, name, type, normal_side, is_system) VALUES (${who.companyId}, ${code}, ${i.name}, 'ASSET', 'DEBIT', false) RETURNING id`;
+  const [c] = await tx`INSERT INTO cash_accounts(company_id, account_id, name, currency, kind, counts_toward_available_cash) VALUES (${who.companyId}, ${a!.id}, ${i.name}, ${i.currency}, ${i.kind}, ${i.kind !== "PARTNER_CUSTODY"}) RETURNING id`;
+  await audit(tx, actor, { action: "cash_account.create", entityType: "cash_account", entityId: c!.id, after: { ...i, code } });
+  return { id: c!.id as string, code };
+}
