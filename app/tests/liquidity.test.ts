@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { makeWorld, type World } from "./world";
 
-let w: World; let P: string; let s1: string, s2: string;
+let w: World; let P: string; let s1: string, s2: string; let winner = { s: "", k: "" };
 beforeAll(async () => { w = await makeWorld(); await w.fund("2000000"); P = await w.mkProduct("LQ"); await w.buy({ product: P, qty: "100", price: "1000", date: "2026-01-05" }); });
 afterAll(async () => { await w.env.teardown(); });
 const earn = async (date: string) => { const inv = (await w.sale({ product: P, qty: "50", price: "3000", date })).id;
@@ -30,12 +30,12 @@ describe("distributable liquidity", () => {
     const sup = await w.api(w.owner, w.R.purchases.POST, { method: "POST", body: { supplierId: w.ids.supplier, docDate: "2026-05-20", paymentType: "CREDIT", currency: "IQD", lines: [{ productId: P, uom: "قطعة", qty: "1", unitPrice: String(Number(l.available) - target) }] } });
     expect((await w.api(w.owner, w.R.purchasePost, { method: "POST", params: { id: sup.body.id } })).status).toBe(200);
     expect(Number((await liq()).available)).toBe(target);
-    const [a, b] = await Promise.all([pay(s1, "conc-key-0001"), pay(s2, "conc-key-0002")]);
+    const [a, b] = await Promise.all([pay(s1, "conc-key-0001"), pay(s2, "conc-key-0002")]); winner = a.status === 200 ? { s: s1, k: "conc-key-0001" } : { s: s2, k: "conc-key-0002" };
     expect([a.status, b.status].sort()).toEqual([200, 409]);
     expect([a, b].find((x) => x.status === 409)!.body.error.code).toBe("INSUFFICIENT_LIQUIDITY");
     expect(Number((await liq()).available)).toBe(10000);
   });
   it("a repeated request with the same idempotency key is refused", async () => {
-    expect((await pay(s1, "conc-key-0001", "100")).body.error.code).toBe("DUPLICATE_PAYOUT");
+    expect((await pay(winner.s, winner.k, "100")).body.error.code).toBe("DUPLICATE_PAYOUT");          // whichever of the two concurrent payouts won, its key is now spent
   });
 });
