@@ -1,4 +1,5 @@
 "use client";
+import { FxRateField } from "@/components/fx-rate-field";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { api, money, today } from "@/lib/client";
@@ -42,7 +43,7 @@ function Inner() {
       <div className="row">
         <div><label htmlFor="t">النوع</label><select id="t" value={type} onChange={(e) => setType(e.target.value)}><option value="CREDIT">آجل</option><option value="CASH">نقدي</option></select></div>
         <div><label htmlFor="cu">العملة</label><select id="cu" value={cur} onChange={(e) => setCur(e.target.value)}><option>IQD</option><option>USD</option></select></div>
-        {cur === "USD" && <div><label htmlFor="r">سعر الصرف (فارغ = سعر اليوم)</label><input id="r" name="rate" inputMode="decimal" dir="ltr" defaultValue={ex?.currency === "USD" ? tr(ex.exchangeRate) : ""} /></div>}
+        {cur === "USD" && <FxRateField defaultValue={ex?.currency === "USD" ? tr(ex.exchangeRate) : ""} />}
         {type === "CASH" ? <div><label htmlFor="ca">يُقبض في (صندوق أو عهدة الشريك)</label><select id="ca" name="cash" defaultValue={ex?.cashAccountId ?? undefined}>{cash.filter((c) => c.currency === cur).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           : <div><label htmlFor="du">الاستحقاق (فارغ = حسب شروط العميل)</label><input id="du" name="due" type="date" defaultValue={ed?.dueDate ?? ""} /></div>}
         <div><label htmlFor="m">التسليم</label><select id="m" name="mode" defaultValue={ex?.deliveryMode ?? "WITH_INVOICE"}><option value="WITH_INVOICE">مع الفاتورة (تلقائي)</option><option value="SEPARATE">بسند تسليم منفصل</option></select></div>

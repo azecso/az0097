@@ -1,4 +1,5 @@
 "use client";
+import { FxRateField } from "@/components/fx-rate-field";
 import { useState } from "react";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
@@ -28,7 +29,7 @@ export default function Payments() {
         <div><label htmlFor="d">التاريخ</label><input id="d" name="date" type="date" defaultValue={today()} /></div>
         <div><label htmlFor="c">الصندوق (يحدد العملة)</label><select id="c" name="cash" required>{cash.filter((c) => c.kind !== "PARTNER_CUSTODY").map((c) => <option key={c.id} value={c.id}>{c.name} ({c.currency})</option>)}</select></div>
         <div><label htmlFor="a">المبلغ</label><input id="a" name="amount" inputMode="decimal" dir="ltr" required /></div>
-        <div><label htmlFor="r">سعر الصرف (للدولار فقط)</label><input id="r" name="rate" inputMode="decimal" dir="ltr" /></div>
+        <FxRateField />
       </div>
       <p>خصّص الدفعة على فواتير آجلة مستحقة (المتبقي غير المخصص يُسجَّل دفعة مقدمة للمورد). فرق الصرف يُحتسب عند الترحيل.</p>
       <div className="cards-as-list"><table><thead><tr><th>الفاتورة</th><th>المورد</th><th>المستحق</th><th>الاستحقاق</th><th>تخصيص</th></tr></thead>

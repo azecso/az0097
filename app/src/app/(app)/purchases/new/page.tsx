@@ -1,4 +1,5 @@
 "use client";
+import { FxRateField } from "@/components/fx-rate-field";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { api, today } from "@/lib/client";
@@ -46,7 +47,7 @@ function Inner() {
       <div className="row">
         <div><label htmlFor="t">الدفع</label><select id="t" value={type} onChange={(e) => setType(e.target.value)}><option value="CASH">نقدي</option><option value="CREDIT">آجل</option></select></div>
         <div><label htmlFor="c">العملة</label><select id="c" value={cur} onChange={(e) => setCur(e.target.value)}><option>IQD</option><option>USD</option></select></div>
-        {cur === "USD" && <div><label htmlFor="r">سعر الصرف (IQD لكل 1 USD) — اتركه فارغاً لسعر اليوم</label><input id="r" name="rate" inputMode="decimal" dir="ltr" defaultValue={ex?.currency === "USD" ? tr(ex.exchangeRate) : ""} /></div>}
+        {cur === "USD" && <FxRateField />}
         {type === "CASH" ? <div><label htmlFor="ca">الصندوق</label><select id="ca" name="cash" required defaultValue={ex?.cashAccountId ?? undefined}>{cash.filter((c) => c.currency === cur && c.kind !== "PARTNER_CUSTODY").map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           : <div><label htmlFor="du">تاريخ الاستحقاق</label><input id="du" name="due" type="date" defaultValue={ed?.dueDate ?? ""} /></div>}
       </div>

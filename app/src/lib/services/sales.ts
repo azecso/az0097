@@ -154,7 +154,17 @@ export async function getInvoice(tx: Tx, id: string) {
   const fin = h.status === "DRAFT" ? {} : await invoiceFinancials(tx, id);
   const cogs = h.status === "DRAFT" ? null : (await tx`SELECT COALESCE(sum(dl.cost_base), 0)::text AS c FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id JOIN sales_lines sl ON sl.id = dl.sales_line_id WHERE sl.invoice_id = ${id} AND dn.status = 'POSTED'`)[0]!.c;
   const profit = h.status === "DRAFT" ? null : await invoiceProfit(tx, id);
-  return { ...h, lines, ...fin, cogsBase: cogs, profit };
+  // invoiced / delivered / collected / remaining, kept apart (policy §2): cash taken for goods not yet delivered is an advance, not earned profit
+  let breakdown: Record<string, string> | null = null;
+  if (h.status !== "DRAFT" && profit) {
+    const f = fin as Awaited<ReturnType<typeof invoiceFinancials>>;
+    const delivered = (await tx`SELECT COALESCE(sum(CASE WHEN dq >= q THEN no ELSE no * dq / q END), 0)::text AS v FROM (SELECT sl.qty_base AS q, sl.net_line_orig AS no,
+        COALESCE((SELECT sum(dl.qty_base) FROM delivery_lines dl JOIN delivery_notes dn ON dn.id = dl.delivery_id WHERE dl.sales_line_id = sl.id AND dn.status = 'POSTED'), 0) AS dq FROM sales_lines sl WHERE sl.invoice_id = ${id}) x`)[0]!.v as string;
+    const paid = d(f.collected).plus(f.external);
+    breakdown = { invoiced: f.net, deliveredValue: d(delivered).toDecimalPlaces(4).toString(), deliveredRatio: profit.deliveredRatio, collected: f.collected, external: f.external, remaining: f.outstanding,
+      advanceOnUndelivered: Decimal.max(paid.minus(delivered), 0).toDecimalPlaces(4).toString(), eligibleProfitBase: profit.linkedProfitBase };
+  }
+  return { ...h, lines, ...fin, cogsBase: cogs, profit, breakdown };
 }
 
 /** Posting: revenue/AR (+discount) entry; goods issue (COGS by FIFO) with the invoice or later; a CASH sale also records its receipt. One transaction. */

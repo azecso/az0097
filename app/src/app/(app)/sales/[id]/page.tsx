@@ -9,7 +9,7 @@ import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
 import { Attach } from "@/components/attach";
 
 interface Line { id: string; lineNo: number; productCode: string; productName: string; uom: string; qty: string; qtyBase: string; unitPrice: string; lineDiscount: string; lineTotal: string; delivered: string; returned: string }
-interface Doc { id: string; customerId: string; docNo: string | null; draftRef: string; docDate: string; customerName: string; saleType: string; currency: string; exchangeRate: string; gross: string; discount: string; net: string; netBase: string; status: string; deliveryMode: string; cashAccountId: string | null;
+interface Doc { breakdown?: { invoiced: string; deliveredValue: string; deliveredRatio: string; collected: string; external: string; remaining: string; advanceOnUndelivered: string; eligibleProfitBase: string }; id: string; customerId: string; docNo: string | null; draftRef: string; docDate: string; customerName: string; saleType: string; currency: string; exchangeRate: string; gross: string; discount: string; net: string; netBase: string; status: string; deliveryMode: string; cashAccountId: string | null;
   lines: Line[]; collected?: string; external?: string; outstanding?: string; returned?: string; cogsBase?: string | null; profit?: { grossProfitBase: string; adjustedProfitBase: string; collectedRatio: string; linkedProfitBase: string } | null; terms: string | null }
 export default function InvoiceView() {
   const { id } = useParams<{ id: string }>(); const router = useRouter(); const me = useMe();
@@ -34,6 +34,13 @@ export default function InvoiceView() {
       {canProfit && d.profit && <><div><div className="label">إجمالي الربح</div><span className="num">{money(d.profit.grossProfitBase)} IQD</span></div>
         <div><div className="label">الربح المرتبط بالتحصيل (مؤشر)</div><span className="num">{money(d.profit.linkedProfitBase)} IQD</span></div></>}
     </div>
+    {posted && d.breakdown && <div className="card" style={{ marginTop: 12 }} aria-label="تفصيل الفاتورة"><h2>تفصيل الفاتورة</h2><div className="grid">
+      <div className="card stat"><div className="label">المفوتر</div><div className="value"><span className="num">{money(d.breakdown.invoiced)}</span></div><small>{d.currency}</small></div>
+      <div className="card stat"><div className="label">المسلَّم (قيمة)</div><div className="value"><span className="num">{money(d.breakdown.deliveredValue)}</span></div><small>{Math.round(Number(d.breakdown.deliveredRatio) * 100)}% من الكميات</small></div>
+      <div className="card stat"><div className="label">المقبوض</div><div className="value"><span className="num">{money(d.breakdown.collected)}</span></div>{Number(d.breakdown.external) > 0 && <small>+ ربح خارجي {money(d.breakdown.external)}</small>}</div>
+      <div className="card stat"><div className="label">المتبقي</div><div className="value"><span className="num">{money(d.breakdown.remaining)}</span></div></div>
+      {Number(d.breakdown.advanceOnUndelivered) > 0 && <div className="card stat"><div className="label">دفعة مقدّمة على بضاعة لم تُسلَّم</div><div className="value"><span className="num">{money(d.breakdown.advanceOnUndelivered)}</span></div><small>ليست ربحاً</small></div>}
+      {canProfit && <div className="card stat"><div className="label">الربح المؤهَّل للتوزيع</div><div className="value"><span className="num">{money(d.breakdown.eligibleProfitBase)}</span></div><small>IQD</small></div>}</div></div>}
     {posted && d.outstanding !== undefined && d.currency === "IQD" && cst?.unappliedCredit && new Decimal(cst.unappliedCredit).gt(0) && new Decimal(d.outstanding).gt(0) && can(me, "voucher:create") && can(me, "voucher:approve") && (() => {
       const use = Decimal.min(new Decimal(cst.unappliedCredit), new Decimal(d.outstanding)).toString();
       return <div className="card" style={{ marginTop: 12, borderColor: "var(--accent)" }}><strong>لهذا العميل رصيد دائن غير مخصَّص: {money(cst.unappliedCredit)} IQD</strong> (قبض سُجّل دون ربطه بفاتورة).

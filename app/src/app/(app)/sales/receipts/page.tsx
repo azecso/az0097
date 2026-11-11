@@ -1,4 +1,5 @@
 "use client";
+import { FxRateField } from "@/components/fx-rate-field";
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Decimal from "decimal.js";
@@ -53,7 +54,7 @@ function Inner() {
         <div><label htmlFor="d">التاريخ</label><input id="d" name="date" type="date" defaultValue={today()} /></div>
         {kind === "CASH" && <><div><label htmlFor="ca">الاستلام في (الصندوق أو عهدة الشريك)</label><select id="ca" name="cash" required value={cashId} onChange={(e) => setCashId(e.target.value)}>{cash.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.currency})</option>)}</select></div>
         <div><label htmlFor="a">المبلغ</label><input id="a" name="amount" required dir="ltr" inputMode="decimal" value={amountValue} onChange={(e) => { setAmt(e.target.value); setAmtTouched(true); }} /></div>
-        <div><label htmlFor="r">سعر الصرف (للدولار)</label><input id="r" name="rate" dir="ltr" inputMode="decimal" /></div></>}</div>
+        <FxRateField /></>}</div>
       {kind === "CASH" ? <p>اختر العميل فتظهر فواتيره المفتوحة، ثم <strong>حدّد الفاتورة التي تقبض عليها</strong> واكتب المبلغ (أو اضغط «المتبقي كاملاً»). لا يُخصَّص شيء تلقائياً. للفاتورة التي أُخذ ربحها خارج النظام فعّل «بدون أرباح» واكتب مبلغ الربح الخارجي: يُغلق من الفاتورة ولا يدخل الصندوق ولا يُوزَّع مرة ثانية (نصفه لكل شريك). ما لم يُخصَّص يُسجَّل <strong>رصيداً دائناً</strong> للعميل ولا يخفض دينه ولا يُحتسب في الربح المرتبط بالتحصيل حتى تسوّيه على فواتير.{rest.gt(0) && <strong style={{ color: "var(--danger)" }}> ⚠ غير مخصَّص: {money(rest.toString())}</strong>}</p> : <p>استخدم رصيد العميل الدائن (دفعات غير مخصَّصة سابقاً) لسداد فواتيره: وزّع المبلغ أدناه على الفواتير؛ مجموع التخصيص = المبلغ المسوّى ({money(allocTotal.toString())}).</p>}<p> القبض بيد الشريك يُسجَّل في «عهدة الشريك» ثم يُسلَّم للصندوق بسند تحويل دون تحصيل مضاعف.</p>
       <div className="cards-as-list"><table><thead><tr><th>الفاتورة</th><th>المتبقي</th><th>الاستحقاق</th><th>تخصيص (مستحصل نقداً)</th>{owner && kind === "CASH" && <th>ربح موزَّع خارج النظام</th>}</tr></thead>
         <tbody>{open.map((a) => <tr key={a.id}><td><span className="num">{a.docNo}</span></td><td><span className="num">{money(a.outstanding)} {a.currency}</span></td><td><span className="num">{a.dueDate ?? "—"}</span>{a.daysOverdue > 0 && <span className="badge"> متأخر {a.daysOverdue}</span>}</td>

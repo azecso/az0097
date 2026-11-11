@@ -76,3 +76,17 @@ describe("company settings", () => {
     expect(stale.status).toBe(409);
   });
 });
+
+describe("rate check is advisory only", () => {
+  it("reports 100 USD in dinars, a stale stored rate and a far-off typed rate without changing anything", async () => {
+    const w2 = await (await import("./world")).makeWorld();
+    try {
+      const chk = (q: string) => w2.api(w2.owner, w2.R.fxCheck, { path: "/api/fx-rates/check?" + q } as any);
+      const ok = (await chk("currency=USD&date=2026-01-02")).body; expect(ok.per100).toBe("145000"); expect(ok.warnings).toEqual([]);
+      const stale = (await chk("currency=USD&date=2026-01-20")).body; expect(stale.warnings).toContain("STALE_RATE");
+      const far = (await chk("currency=USD&date=2026-01-02&rate=148")).body; expect(far.warnings).toContain("BIG_CHANGE");
+      const typed = (await chk("currency=USD&date=2026-01-02&rate=1480")).body; expect(typed.per100).toBe("148000"); expect(typed.warnings).toEqual([]);
+      expect((await w2.api(w2.owner, w2.R.fx, { method: "POST", body: { currency: "USD", rateDate: "2026-01-02", rate: "1455" } })).status).toBe(200);
+    } finally { await w2.env.teardown(); }
+  });
+});

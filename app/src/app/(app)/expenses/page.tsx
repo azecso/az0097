@@ -1,4 +1,5 @@
 "use client";
+import { FxRateField } from "@/components/fx-rate-field";
 import { useState } from "react";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
@@ -29,7 +30,7 @@ export default function Expenses() {
         <div><label htmlFor="c">التصنيف</label><PickOrCreate kind="category" id="c" name="cat" required options={cats.map((c) => ({ id: c.id, label: c.name }))} /></div>
         <div><label htmlFor="de">البيان</label><input id="de" name="desc" required minLength={2} /></div>
         <div><label htmlFor="cu">العملة</label><select id="cu" value={cur} onChange={(e) => setCur(e.target.value)}><option>IQD</option><option>USD</option></select></div>
-        {cur === "USD" && <div><label htmlFor="r">سعر الصرف</label><input id="r" name="rate" dir="ltr" inputMode="decimal" /></div>}
+        {cur === "USD" && <FxRateField />}
         <div><label htmlFor="a">المبلغ</label><input id="a" name="amount" required dir="ltr" inputMode="decimal" /></div></div>
       <div className="row">
         <div><label htmlFor="m">طريقة الدفع</label><select id="m" value={mode} onChange={(e) => setMode(e.target.value)}>{Object.entries(MODE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>

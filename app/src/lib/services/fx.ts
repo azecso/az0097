@@ -42,3 +42,14 @@ export async function rateOn(tx: Tx, currency: string, date: string) {
     WHERE currency = ${currency} AND rate_date <= ${date} ORDER BY rate_date DESC LIMIT 1`;
   return r ?? null;
 }
+
+/** Advisory check of the rate a user is about to use (never changes anything): how old the stored daily rate is and how far the typed rate is from it. */
+export async function checkRate(tx: Tx, currency: string, date: string, typed?: string) {
+  const [last] = await tx`SELECT rate::text AS rate, rate_date::text AS "rateDate", (${date}::date - rate_date)::int AS "ageDays" FROM fx_rates WHERE currency = ${currency} AND rate_date <= ${date} ORDER BY rate_date DESC LIMIT 1`;
+  const used = typed ? new Decimal(typed) : last ? new Decimal(last.rate as string) : null;
+  const warnings: string[] = [];
+  if (!last) warnings.push("NO_STORED_RATE");
+  if (last && !typed && Number(last.ageDays) > 3) warnings.push("STALE_RATE");
+  if (typed && last) { const dev = new Decimal(typed).minus(last.rate as string).abs().div(last.rate as string); if (dev.gt("0.05")) warnings.push("BIG_CHANGE"); }
+  return { rate: used?.toString() ?? null, per100: used ? used.mul(100).toString() : null, source: typed ? "typed" : last ? "daily" : null, stored: last ?? null, warnings };
+}

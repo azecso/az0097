@@ -34,6 +34,7 @@ describe("A. an invoice collected before delivery is not profit; revenue follows
     expect((await deliver(inv, "4", "2026-02-10")).status).toBe(200);
     expect(await acct("4100")).toBe(-8000); expect(await acct("2600")).toBe(-12000);
     expect((await preview("2026-01-01", "2026-02-28")).body.eligibleProfit).toBe("4000");
+    expect((await w.getInvoice(inv)).breakdown).toMatchObject({ invoiced: "20000.0000", deliveredValue: "8000", collected: "20000.0000", remaining: "0", advanceOnUndelivered: "12000", eligibleProfitBase: "4000" });
   });
   it("delivering the rest earns the full 10,000 and empties 2600 exactly", async () => {
     expect((await deliver(inv, "6", "2026-02-12")).status).toBe(200);
