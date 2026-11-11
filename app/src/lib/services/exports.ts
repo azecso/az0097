@@ -17,8 +17,8 @@ const MAX_SAFE_DIGITS = 15;                                         // Excel sto
 /** A money/quantity cell: a real number when Excel can hold it exactly, otherwise the exact decimal text (never a silently rounded Number). */
 export function numericCell(v: unknown, places?: number): number | string {
   const x = places === undefined ? d(String(v)) : d(String(v)).toDecimalPlaces(places);
-  const digits = x.abs().toFixed().replace(".", "").replace(/^0+/, "").length;
-  return digits <= MAX_SAFE_DIGITS ? x.toNumber() : x.toFixed();
+  const digits = x.abs().toString().replace(".", "").replace(/^0+/, "").length;
+  return digits <= MAX_SAFE_DIGITS ? x.toNumber() : x.toString();
 }
 const placesOf = (cur: unknown) => (cur === "USD" ? 2 : 0);
 

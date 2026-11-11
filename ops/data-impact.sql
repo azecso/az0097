@@ -41,3 +41,12 @@ SELECT doc_no, period_end, reserved, reserve_released FROM profit_settlements WH
 
 \echo '7) Months closed with a snapshot that included later movements (old snapshots had no as-of date). Plan: informational; re-close after re-opening if the snapshot is relied upon.'
 SELECT period_month, closed_at, (snapshot->>'asOf') IS NULL AS legacy_snapshot FROM accounting_periods WHERE status = 'CLOSED' AND (snapshot->>'asOf') IS NULL ORDER BY period_month;
+
+\echo '8) (round 2) Invoices whose profit was released by an approved settlement but that are NOT fully paid today. Under the "paid AND delivered in full" rule their eligible profit is now 0, so the NEXT settlement will show a negative (clawback) line for them. Review the preview before approving.'
+SELECT s.doc_no AS settlement, i.doc_no AS invoice, l.newly_released,
+       i.net - COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id WHERE a.invoice_id = i.id AND r.status = 'POSTED'), 0)
+             - COALESCE((SELECT sum(applied_orig) FROM sales_returns WHERE invoice_id = i.id AND status = 'POSTED'), 0) AS still_owed
+FROM profit_settlement_lines l JOIN profit_settlements s ON s.id = l.settlement_id JOIN sales_invoices i ON i.id = l.invoice_id
+WHERE s.status = 'POSTED' AND l.released_after > 0
+  AND i.net - COALESCE((SELECT sum(a.amount) FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id WHERE a.invoice_id = i.id AND r.status = 'POSTED'), 0)
+           - COALESCE((SELECT sum(applied_orig) FROM sales_returns WHERE invoice_id = i.id AND status = 'POSTED'), 0) > 0;
