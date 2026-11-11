@@ -7,6 +7,7 @@ import Link from "next/link";
 import { api, money, today } from "@/lib/client";
 import { can, useMe } from "@/components/me";
 import { createDraft, useRefList } from "@/lib/offline/use";
+import { UsdReceiptDialog } from "@/components/usd-receipt-dialog";
 import { MsgBox, StatusBadge, useAction, useLoad , ReverseBox } from "@/components/ui";
 
 interface R { id: string; draftRef: string; docNo: string | null; docDate: string; customerName: string; kind: string; cashAccount: string | null; currency: string; amount: string; fxDiffBase: string; status: string; autoForInvoice: string | null }
@@ -44,10 +45,13 @@ function Inner() {
     if (r?.mode === "queued") { setMsg({ t: "ok", m: "📴 حُفظت على جهازك مشفّرة وبانتظار المزامنة — ستُرسل تلقائياً عند عودة الاتصال (تابعها من «المزامنة»)." }); setAlloc({}); return; }
     setAlloc({}); setExt({}); setAmt(""); setAmtTouched(false);
   }
-  const [showDel, setShowDel] = useState(false);
+  const [showDel, setShowDel] = useState(false); const [usdOpen, setUsdOpen] = useState(false);
   return (<>
+    {usdOpen && !editId && <UsdReceiptDialog onClose={() => setUsdOpen(false)} onDone={(m) => { setUsdOpen(false); setMsg({ t: "ok", m }); void list.reload(); void aging.reload(); }} />}
+    {editId && form?.usdSettlement && <UsdReceiptDialog edit={{ receiptId: editId }} onClose={() => router.push("/sales/receipts")} onDone={() => router.push("/sales/receipts")} />}
+    {!editId && can(me, "voucher:create") && can(me, "voucher:approve") && <p><button type="button" onClick={() => setUsdOpen(true)}>💵 استلام بالدولار مقابل فاتورة دينار</button></p>}
     <h1>{editId ? `تعديل سند القبض ${form?.docNo ?? ""}` : "سندات القبض"}</h1>{editId && <div className="msg">تعديل سند مرحّل: يبقى رقمه ويُعاد احتساب الصندوق والفواتير تلقائياً.</div>}
-    {can(me, "voucher:create") && <form key={form?.id ?? "new"} className="card" onSubmit={create} style={{ display: "grid", gap: 12 }}>
+    {can(me, "voucher:create") && !form?.usdSettlement && <form key={form?.id ?? "new"} className="card" onSubmit={create} style={{ display: "grid", gap: 12 }}>
       <div className="row">
         <div><label htmlFor="k">نوع السند</label><select id="k" value={kind} onChange={(e) => { setKind(e.target.value as "CASH" | "CREDIT_APPLICATION"); setAlloc({}); setExt({}); setManual(kind !== "CASH"); }}><option value="CASH">قبض نقدي</option><option value="CREDIT_APPLICATION">تسوية رصيد دائن على فواتير</option></select></div>
         <div><label htmlFor="c">العميل</label><select id="c" value={customer} onChange={(e) => { setCustomer(e.target.value); setAlloc({}); setExt({}); setAmt(""); setAmtTouched(false); setManual(false); }} required><option value="">اختر…</option>{cust.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>

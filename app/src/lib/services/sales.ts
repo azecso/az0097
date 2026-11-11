@@ -176,7 +176,7 @@ export async function getInvoice(tx: Tx, id: string) {
     breakdown = { outside: outsideInfo, invoiced: f.net, deliveredValue: d(delivered).toDecimalPlaces(4).toString(), deliveredRatio: profit.deliveredRatio, collected: f.collected, external: f.external, remaining: f.outstanding,
       advanceOnUndelivered: Decimal.max(paid.minus(delivered), 0).toDecimalPlaces(4).toString(), eligibleProfitBase: profit.linkedProfitBase };
   }
-  const receipts = h.status === "DRAFT" ? [] : await tx`SELECT r.id, r.doc_no AS "docNo", r.doc_date::text AS "docDate", r.currency, r.settlement_rate::text AS "settlementRate", r.auto_for_invoice_id IS NOT NULL AS auto,
+  const receipts = h.status === "DRAFT" ? [] : await tx`SELECT r.id, r.doc_no AS "docNo", r.doc_date::text AS "docDate", r.currency, r.settlement_rate::text AS "settlementRate", r.auto_for_invoice_id IS NOT NULL AS auto, r.usd_settlement AS "usdSettlement", r.amount::text AS "usdReceived", r.remaining_after::text AS "remainingAfter",
       COALESCE(sum(a.amount) FILTER (WHERE NOT a.external), 0)::text AS amount, COALESCE(sum(a.amount) FILTER (WHERE a.external), 0)::text AS external
     FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id WHERE a.invoice_id = ${id} AND r.status = 'POSTED' GROUP BY r.id ORDER BY r.doc_date, r.created_at`;
   return { ...h, lines, ...fin, cogsBase: cogs, profit, breakdown, receipts };
@@ -293,12 +293,14 @@ export async function amendInvoice(tx: Tx, who: Principal, actor: Actor, id: str
     await tx`UPDATE customer_receipts SET auto_for_invoice_id = ${created.id} WHERE auto_for_invoice_id = ${id} AND id = ANY(${rcs}::uuid[])`;
     // Money really received stays. If the corrected invoice is worth less than what was collected, the allocations are cut to what the invoice can take;
     // the rest of each receipt stays a real, unallocated amount and becomes customer credit (never deleted, never silently refunded).
+    const usdSet = new Set((await tx`SELECT id FROM customer_receipts WHERE id = ANY(${rcs}::uuid[]) AND usd_settlement`).map((x) => x.id as string));
     let room = d(posted ? (await tx`SELECT net FROM sales_invoices WHERE id = ${created.id}`)[0]!.net : 0);
     for (const ext of [false, true]) {
       for (const r of rcs) {
         const rows = await tx`SELECT id, amount::text AS amount, external FROM receipt_allocations WHERE receipt_id = ${r} AND invoice_id = ${created.id} AND external = ${ext}`;
         for (const a of rows) {
           const keep = Decimal.min(d(a.amount as string), room);
+          if (keep.lt(d(a.amount as string)) && usdSet.has(r)) throw conflict("USD_RECEIPT_EXCEEDS_NEW_TOTAL", "الفاتورة بعد التصحيح أقل مما سُدِّد بسند دولار؛ عدّل سند القبض بالدولار أولاً (المتبقي الذي أدخلته) ثم صحّح الفاتورة");
           if (keep.lt(d(a.amount as string))) { if (keep.lte(0)) await tx`DELETE FROM receipt_allocations WHERE id = ${a.id}`; else await tx`UPDATE receipt_allocations SET amount = ${keep.toString()} WHERE id = ${a.id}`; }
           room = room.minus(keep);
         }

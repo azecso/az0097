@@ -110,7 +110,7 @@ async function partyRows(tx: Tx, side: "customer" | "supplier", f: Filters) {
   const rows = await tx`
     WITH l AS (
       SELECT jl.contact_id, COALESCE(jl.currency, 'IQD') AS cur, a.code, je.entry_date AS dt, je.source_doc_type AS st,
-        COALESCE(cr.kind, '') AS rkind, COALESCE(jl.memo, ol.memo, '') AS lm,
+        COALESCE(cr.kind, '') AS rkind, COALESCE(cr.usd_settlement, false) AS usd, COALESCE(jl.memo, ol.memo, '') AS lm,
         (CASE WHEN jl.debit_base > 0 THEN jl.amount_orig ELSE -jl.amount_orig END) AS signed
       FROM journal_lines jl JOIN journal_entries je ON je.id = jl.entry_id JOIN accounts a ON a.id = jl.account_id
         LEFT JOIN journal_entries oe ON oe.id = je.reverses_entry_id LEFT JOIN journal_lines ol ON ol.entry_id = oe.id AND ol.line_no = jl.line_no
@@ -122,7 +122,8 @@ async function partyRows(tx: Tx, side: "customer" | "supplier", f: Filters) {
       COALESCE(sum(signed) FILTER (WHERE l.code = ${ar ? "1200" : "2100"} AND st = 'opening' AND (${from}::date IS NULL OR dt >= ${from}::date)), 0)::text AS opening_docs,
       COALESCE(sum(signed) FILTER (WHERE l.code = ${ar ? "1200" : "2100"} AND st = ${ar ? "sales_invoice" : "purchase_order"} AND (${from}::date IS NULL OR dt >= ${from}::date)), 0)::text AS invoices,
       COALESCE(sum(signed) FILTER (WHERE l.code = ${ar ? "1200" : "2100"} AND st = ${ar ? "sales_return" : "purchase_return"} AND (${from}::date IS NULL OR dt >= ${from}::date)), 0)::text AS returns,
-      COALESCE(sum(signed) FILTER (WHERE l.code = ${ar ? "1200" : "2100"} AND st = ${ar ? "customer_receipt" : "supplier_payment"} AND rkind <> 'CREDIT_APPLICATION' AND lm <> 'ربح موزَّع خارج النظام' AND (${from}::date IS NULL OR dt >= ${from}::date)), 0)::text AS cash,
+      COALESCE(sum(signed) FILTER (WHERE l.code = ${ar ? "1200" : "2100"} AND st = ${ar ? "customer_receipt" : "supplier_payment"} AND rkind <> 'CREDIT_APPLICATION' AND NOT usd AND lm <> 'ربح موزَّع خارج النظام' AND (${from}::date IS NULL OR dt >= ${from}::date)), 0)::text AS cash,
+      COALESCE(sum(signed) FILTER (WHERE l.code = '1200' AND st = 'customer_receipt' AND usd AND (${from}::date IS NULL OR dt >= ${from}::date)), 0)::text AS usd_eq,
       COALESCE(sum(signed) FILTER (WHERE l.code = '1200' AND st = 'customer_receipt' AND lm = 'ربح موزَّع خارج النظام' AND (${from}::date IS NULL OR dt >= ${from}::date)), 0)::text AS external,
       COALESCE(sum(signed) FILTER (WHERE l.code = '1200' AND st = 'customer_receipt' AND rkind = 'CREDIT_APPLICATION' AND (${from}::date IS NULL OR dt >= ${from}::date)), 0)::text AS applied,
       COALESCE(sum(signed) FILTER (WHERE l.code = ${ar ? "1200" : "2100"}), 0)::text AS closing_raw,
@@ -138,20 +139,22 @@ function statement(side: "customer" | "supplier"): Def {
     definition: ar ? "لكل عميل ولكل عملة (دون دمج عملتين ولا عميلين بالاسم نفسه): الرصيد الافتتاحي، الفواتير، المرتجعات، المقبوض النقدي الفعلي، التسويات غير النقدية (ربح موزَّع خارج النظام)، تسوية الرصيد الدائن، والرصيد الختامي. الرصيد الدائن (2400) مفصول: ما نشأ عن مرتجع وما نشأ عن دفعة غير مخصَّصة. المصدر: الأستاذ 1200/2400، قطع بتاريخ «إلى»."
       : "لكل مورد ولكل عملة: الرصيد الافتتاحي، الفواتير، المرتجعات، المدفوع الفعلي، أخرى، والرصيد الختامي (سالب = دفعة مقدمة للمورد). المصدر: الأستاذ 2100، قطع بتاريخ «إلى».",
     async run(tx, f) {
-      const raw = await partyRows(tx, side, f); const neg = (v: string) => d(v).neg();
+      const raw = await partyRows(tx, side, f); const usdRecv = new Map<string, string>();
+      if (ar) for (const u of await tx`SELECT customer_id::text AS cid, COALESCE(sum(amount), 0)::text AS s FROM customer_receipts WHERE usd_settlement AND status = 'POSTED' AND doc_date <= ${f.to ?? today()} AND (${f.from ?? null}::date IS NULL OR doc_date >= ${f.from ?? null}::date) GROUP BY customer_id`) usdRecv.set(u.cid as string, u.s as string);
+      const neg = (v: string) => d(v).neg();
       const rows: Row[] = raw.filter((r) => ar || !d(r.closing_raw as string).isZero() || !d(r.invoices as string).isZero() || !d(r.opening_raw as string).isZero()).map((r) => {
         const sg = ar ? 1 : -1;                                                 // receivable: debit positive; payable: credit positive
         const opening = d(r.opening_raw as string).mul(sg), opd = d(r.opening_docs as string).mul(sg), inv = d(r.invoices as string).mul(sg), ret = neg(r.returns as string).mul(sg), cash = neg(r.cash as string).mul(sg);
-        const ext = neg(r.external as string), app = neg(r.applied as string), closing = d(r.closing_raw as string).mul(sg);
-        const other = opening.plus(opd).plus(inv).minus(ret).minus(cash).minus(ar ? ext.plus(app) : 0).minus(closing).neg();   // anything not classified above (reversal timing etc.) so the row always foots
+        const ext = neg(r.external as string), app = neg(r.applied as string), usdEq = neg(r.usd_eq as string), closing = d(r.closing_raw as string).mul(sg);
+        const other = opening.plus(opd).plus(inv).minus(ret).minus(cash).minus(ar ? ext.plus(app).plus(usdEq) : 0).minus(closing).neg();   // anything not classified above (reversal timing etc.) so the row always foots
         const base: Row = { party: r.name as string, partyId: r.pid as string, currency: r.cur as string, opening: opening.toString(), openingDocs: opd.toString(), invoices: inv.toString(), returns: ret.toString(), cash: cash.toString() };
-        if (ar) Object.assign(base, { external: ext.toString(), applied: app.toString() });
+        if (ar) Object.assign(base, { external: ext.toString(), applied: app.toString(), usdEq: usdEq.toString(), usdReceived: r.cur === "IQD" ? usdRecv.get(`${r.pid}`) ?? "0" : "0" });
         Object.assign(base, { other: other.toString(), closing: closing.toString() });
         if (ar) Object.assign(base, { creditReturns: neg(r.credit_returns as string).toString(), creditAdvance: neg(r.credit_advance as string).toString(), creditClosing: neg(r.credit_closing_raw as string).toString() });
         return base;
       });
       const cols: Col[] = [{ key: "party", label: ar ? "العميل" : "المورد" }, { key: "currency", label: "العملة" }, { key: "opening", label: "رصيد افتتاحي", kind: "money" }, { key: "openingDocs", label: "أرصدة افتتاحية مُدخلة", kind: "money" }, { key: "invoices", label: "الفواتير", kind: "money" }, { key: "returns", label: "المرتجعات", kind: "money" }, { key: "cash", label: ar ? "المقبوض نقداً (فعلي)" : "المدفوع (فعلي)", kind: "money" }];
-      if (ar) cols.push({ key: "external", label: "تسوية غير نقدية (ربح خارجي)", kind: "money" }, { key: "applied", label: "رصيد دائن مُسوّى", kind: "money" });
+      if (ar) cols.push({ key: "external", label: "تسوية غير نقدية (ربح خارجي)", kind: "money" }, { key: "applied", label: "رصيد دائن مُسوّى", kind: "money" }, { key: "usdEq", label: "معادل تسديد بقبض دولار (محتسب، ليس نقد دينار)", kind: "money" }, { key: "usdReceived", label: "دولار مقبوض فعلياً (USD)", kind: "money", cur: "USD" });
       cols.push({ key: "other", label: "أخرى", kind: "money" }, { key: "closing", label: ar ? "الرصيد الختامي (مدين)" : "الرصيد الختامي (دائن)", kind: "money" });
       if (ar) cols.push({ key: "creditReturns", label: "رصيد دائن من مرتجع", kind: "money" }, { key: "creditAdvance", label: "رصيد دائن من دفعة غير مخصَّصة", kind: "money" }, { key: "creditClosing", label: "رصيد دائن ختامي", kind: "money" });
       const keys = cols.filter((c) => c.kind === "money").map((c) => c.key);
@@ -168,7 +171,7 @@ const customerInvoices: Def = { id: "customer-invoices", title: "فواتير ا
       WHERE si.status = 'POSTED' AND si.doc_date <= ${to} AND (${from}::date IS NULL OR si.doc_date >= ${from}::date) AND (${party}::uuid IS NULL OR si.customer_id = ${party}::uuid) AND (${cur}::text IS NULL OR si.currency = ${cur}::text)
       ORDER BY c.name, c.id, si.doc_date, si.doc_no`;
     const ids = invs.map((i) => i.id as string);
-    const rcs = ids.length ? await tx`SELECT a.invoice_id, r.id, r.doc_no, r.doc_date::text AS dt, r.status, r.kind, r.created_at, ca.name AS acct, a.external, a.external_kind, a.amount::text AS amount, r.auto_for_invoice_id IS NOT NULL AS auto
+    const rcs = ids.length ? await tx`SELECT a.invoice_id, r.id, r.doc_no, r.doc_date::text AS dt, r.status, r.kind, r.created_at, ca.name AS acct, a.external, a.external_kind, a.amount::text AS amount, r.auto_for_invoice_id IS NOT NULL AS auto, r.usd_settlement AS usd, r.amount::text AS usd_amount, r.settlement_rate::text AS srate, r.remaining_after::text AS rem_after
       FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id LEFT JOIN cash_accounts ca ON ca.id = r.cash_account_id
       WHERE a.invoice_id = ANY(${ids}::uuid[]) AND r.status IN ('POSTED','REVERSED') AND r.doc_date <= ${to} ORDER BY r.doc_date, r.created_at` : [];
     const rets = ids.length ? await tx`SELECT sr.invoice_id, sr.id, sr.doc_no, sr.doc_date::text AS dt, sr.status, sr.created_at, sr.value_orig::text AS value, sr.applied_orig::text AS applied, sr.credit_orig::text AS credit, sr.refund_orig::text AS refund
@@ -179,8 +182,8 @@ const customerInvoices: Def = { id: "customer-invoices", title: "فواتير ا
       const mv: Mv[] = [];
       for (const a of rcs.filter((x) => x.invoice_id === i.id)) {
         const live = a.status === "POSTED", amt = d(a.amount as string);
-        const kind = a.kind === "CREDIT_APPLICATION" ? "تسوية من رصيد دائن" : a.external ? (a.external_kind === "OUTSIDE_MARGIN" ? "مستلم خارج الصندوق (ربح خارج التوزيع)" : "تسوية غير نقدية (ربح موزَّع خارج النظام)") : a.auto ? "قبض نقدي (بيع نقدي)" : "قبض نقدي";
-        mv.push({ dt: a.dt as string, at: new Date(a.created_at as string).getTime(), kind: live ? kind : `${kind} — ملغى`, no: a.doc_no as string, link: `/print/receipt/${a.id}`, note: (a.acct as string | null) ?? "", amount: amt.toString(), effect: live ? amt : d(0), paid: live ? amt : d(0), ret: d(0), void: !live });
+        const kind = a.usd ? "قبض دولار مقابل فاتورة دينار (معادل التسديد محتسب)" : a.kind === "CREDIT_APPLICATION" ? "تسوية من رصيد دائن" : a.external ? (a.external_kind === "OUTSIDE_MARGIN" ? "مستلم خارج الصندوق (ربح خارج التوزيع)" : "تسوية غير نقدية (ربح موزَّع خارج النظام)") : a.auto ? "قبض نقدي (بيع نقدي)" : "قبض نقدي";
+        mv.push({ dt: a.dt as string, at: new Date(a.created_at as string).getTime(), kind: live ? kind : `${kind} — ملغى`, no: a.doc_no as string, link: `/print/receipt/${a.id}`, note: a.usd ? `${a.acct ?? ""} — ${d(a.usd_amount as string)} USD مقبوض فعلياً، المعادل المحتسب ${amt} د.ع (سعر مستنتج ${d(a.srate as string)})، المتبقي بعده ${d(a.rem_after as string)} د.ع` : (a.acct as string | null) ?? "", amount: amt.toString(), effect: live ? amt : d(0), paid: live ? amt : d(0), ret: d(0), void: !live });
       }
       for (const r of rets.filter((x) => x.invoice_id === i.id)) {
         const live = r.status === "POSTED", ap = d(r.applied as string);

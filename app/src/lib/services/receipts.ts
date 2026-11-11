@@ -212,6 +212,7 @@ export async function amendReceipt(tx: Tx, who: Principal, actor: Actor, id: str
   if (!r) throw notFound();
   if (r.status !== "POSTED") throw conflict("NOT_POSTED", "التعديل بهذه الطريقة للسندات المرحّلة فقط");
   if (r.version !== i.version) throw conflict("VERSION_CONFLICT", "تم تعديل السند من جهة أخرى؛ أعد فتحه");
+  if (r.usd_settlement) throw conflict("USE_USD_AMEND", "هذا سند استلام دولار مقابل فاتورة دينار؛ عدّله من نموذج «استلام بالدولار»");
   await unpostReceipt(tx, actor, id, "تعديل سند قبض");
   await validate(tx, i, who);
   const rate = await resolveRate(tx, i.currency, i.docDate, i.exchangeRate ?? undefined);
@@ -226,7 +227,7 @@ export async function amendReceipt(tx: Tx, who: Principal, actor: Actor, id: str
 /** The editable form of a posted receipt: each invoice with what is still owed WITHOUT this receipt. */
 export async function getReceiptForEdit(tx: Tx, id: string) {
   const [r] = await tx`SELECT r.id, r.doc_no AS "docNo", r.doc_date::text AS "docDate", r.kind, r.customer_id AS "customerId", r.cash_account_id AS "cashAccountId", r.currency, r.exchange_rate_snapshot::text AS "exchangeRate",
-      r.amount::text AS amount, r.notes, r.status, r.version, r.auto_for_invoice_id AS "autoForInvoice" FROM customer_receipts r WHERE r.id = ${id}`;
+      r.amount::text AS amount, r.notes, r.status, r.version, r.auto_for_invoice_id AS "autoForInvoice", r.usd_settlement AS "usdSettlement", r.remaining_after::text AS "remainingAfter", r.outstanding_before::text AS "outstandingBefore" FROM customer_receipts r WHERE r.id = ${id}`;
   if (!r) throw notFound();
   const rows = await tx`SELECT si.id AS "invoiceId", si.doc_no AS "docNo", si.currency, si.due_date::text AS "dueDate", sum(CASE WHEN a.external THEN 0 ELSE a.amount END)::text AS cash,
       sum(CASE WHEN a.external THEN a.amount ELSE 0 END)::text AS external, max(CASE WHEN a.external THEN a.note END) AS note
@@ -313,7 +314,7 @@ void Decimal;
 // ---- single-document readers (print / PDF) ----
 export async function getReceipt(tx: Tx, id: string) {
   const [r] = await tx`SELECT r.id, r.doc_no AS "docNo", r.draft_ref AS "draftRef", r.doc_date::text AS "docDate", r.kind, c.name AS "customerName", c.phones AS "customerPhones", c.address AS "customerAddress", ca.name AS "cashAccount", r.currency, r.exchange_rate_snapshot::text AS "exchangeRate",
-      r.amount::text AS amount, r.notes, r.status FROM customer_receipts r JOIN contacts c ON c.id = r.customer_id LEFT JOIN cash_accounts ca ON ca.id = r.cash_account_id WHERE r.id = ${id}`;
+      r.amount::text AS amount, r.notes, r.status, r.usd_settlement AS "usdSettlement", r.outstanding_before::text AS "outstandingBefore", r.remaining_after::text AS "remainingAfter", r.settlement_rate::text AS "settlementRate" FROM customer_receipts r JOIN contacts c ON c.id = r.customer_id LEFT JOIN cash_accounts ca ON ca.id = r.cash_account_id WHERE r.id = ${id}`;
   if (!r) throw notFound();
   // Per invoice: its value, what this receipt pays, what has been paid up to and including this receipt, and what is STILL owed after it (returns applied to the receivable are deducted).
   // The printed receipt shows the FULL settled amount (cash + profit distributed outside), exactly like the invoice; the internal reports keep the split (cash vs external).
@@ -369,4 +370,82 @@ export async function collectOnInvoice(tx: Tx, who: Principal, actor: Actor, inv
     const after = await invoiceFinancials(tx, invoiceId);
     return { receiptId: rec.id as string, docNo: posted.docNo as string, applied: applied.toString(), surplusToCredit: settled.gt(applied) ? settled.minus(applied).toString() : "0", outstanding: after.outstanding, status: d(after.outstanding).isZero() ? "PAID" : "PARTIAL" };
   });
+}
+
+// =========================== USD received against a dinar invoice (no market rate) ===========================
+/**
+ * The user states what really happened: dollars received, and the dinar balance that remains (or none). Settled dinars = balance before - balance after; the implied rate (settled / dollars)
+ * is derived for the books and audit only — it is never asked for and never changes what the user entered. Paying the invoice off completely requires an explicit confirmation object that
+ * the SERVER verifies against the current figures (a stale or missing confirmation is refused); the UI warning alone is not enough.
+ */
+export const usdReceiptSchema = z.object({
+  requestId: z.string().min(8).max(120), invoiceId: uuid, customerId: uuid, docDate: dateStr, cashAccountId: uuid, usdAmount: moneyStr,
+  keepRemainder: z.boolean(), remainingIqd: moneyStr.nullish(),
+  expectedOutstanding: moneyStr,                                                  // the remaining the user saw on screen; if the invoice moved since, nothing is saved
+  fullSettlementConfirmation: z.object({ invoiceId: uuid, customerId: uuid, cashAccountId: uuid, usdAmount: moneyStr, outstandingBefore: moneyStr }).nullish(),
+  notes: z.string().max(500).nullish(),
+});
+export const usdReceiptUpdateSchema = usdReceiptSchema.omit({ requestId: true }).extend({ version: z.number().int() });
+
+async function planUsd(tx: Tx, i: Omit<z.infer<typeof usdReceiptSchema>, "requestId">) {
+  const usd = d(i.usdAmount);
+  if (usd.lte(0)) throw badRequest("INVALID_AMOUNT", "مبلغ الدولار يجب أن يكون موجباً");
+  const [inv] = await tx`SELECT customer_id, currency, status, doc_no FROM sales_invoices WHERE id = ${i.invoiceId} FOR UPDATE`;
+  if (!inv) throw notFound();
+  if (inv.customer_id !== i.customerId) throw badRequest("BAD_ALLOCATION", "الفاتورة ليست لهذا العميل");
+  if (inv.status !== "POSTED") throw conflict("INVOICE_NOT_POSTED", "اعتمد الفاتورة أولاً");
+  if (inv.currency !== "IQD") throw badRequest("INVOICE_NOT_IQD", "هذا المسار لفواتير الدينار العراقي فقط");
+  const [ca] = await tx`SELECT currency FROM cash_accounts WHERE id = ${i.cashAccountId} AND is_active`;
+  if (!ca || ca.currency !== "USD") throw badRequest("USD_CASH_ACCOUNT_REQUIRED", "اختر صندوق دولار");
+  const outstanding = d((await invoiceFinancials(tx, i.invoiceId)).outstanding);
+  if (outstanding.lte(0)) throw conflict("ALREADY_SETTLED", "الفاتورة مسدَّدة بالكامل");
+  if (!d(i.expectedOutstanding).eq(outstanding)) throw conflict("STALE_BALANCE", `تغيّر المتبقي على الفاتورة منذ فتح النافذة (المتبقي الآن ${outstanding} د.ع)؛ راجع القيم وأعد المحاولة`);
+  let remaining: Decimal;
+  if (i.keepRemainder) {
+    if (!i.remainingIqd) throw badRequest("REMAINING_REQUIRED", "أدخل المتبقي بذمة العميل بالدينار");
+    remaining = d(i.remainingIqd);
+    if (remaining.lte(0) || remaining.gte(outstanding)) throw badRequest("BAD_REMAINING", `المتبقي يجب أن يكون موجباً وأقل من المتبقي الحالي (${outstanding}). للتسديد الكامل ألغِ خيار «يبقى مبلغ بذمة العميل» وأكّد`);
+    if (remaining.decimalPlaces() > 0) throw badRequest("BAD_REMAINING", "المتبقي بالدينار بلا كسور");
+  } else {
+    const c = i.fullSettlementConfirmation;
+    if (!c || c.invoiceId !== i.invoiceId || c.customerId !== i.customerId || c.cashAccountId !== i.cashAccountId || !d(c.usdAmount).eq(usd) || !d(c.outstandingBefore).eq(outstanding))
+      throw conflict("FULL_SETTLEMENT_CONFIRMATION_REQUIRED", "التسديد الكامل (تصفير المتبقي) يتطلب تأكيداً صريحاً مطابقاً للقيم الحالية");
+    remaining = d(0);
+  }
+  const paid = outstanding.minus(remaining);
+  const rate = paid.div(usd).toDecimalPlaces(8);
+  if (rate.lt(1) || rate.gt(100000)) throw badRequest("RATE_OUT_OF_RANGE", `المعادل المستنتج (${rate} د.ع لكل دولار) خارج المعقول؛ راجع مبلغ الدولار والمتبقي`);
+  return { usd, paid, rate, outstanding, remaining, docNo: inv.doc_no as string };
+}
+
+export async function receiveUsd(tx: Tx, who: Principal, actor: Actor, i: z.infer<typeof usdReceiptSchema>) {
+  const { once } = await import("../idempotency");
+  return once(tx, who, i.requestId, `usd:${i.invoiceId}`, async () => {
+    const p = await planUsd(tx, i);
+    const r = p.rate.toString();
+    const rec = await createReceipt(tx, who, actor, { customerId: i.customerId, docDate: i.docDate, kind: "CASH", cashAccountId: i.cashAccountId, currency: "USD", exchangeRate: r, settlementRate: r, amount: p.usd.toString(), notes: i.notes ?? null,
+      allocations: [{ invoiceId: i.invoiceId, amount: p.paid.toString(), externalAmount: "0", externalKind: "PROFIT_SHARE" }] });
+    await tx`UPDATE customer_receipts SET usd_settlement = true, outstanding_before = ${p.outstanding.toString()}, remaining_after = ${p.remaining.toString()} WHERE id = ${rec.id}`;
+    const posted = await postReceipt(tx, who, actor, rec.id as string);
+    await audit(tx, actor, { action: "receipt.usd_against_iqd", entityType: "customer_receipt", entityId: rec.id as string, after: { usd: p.usd.toString(), settledIqd: p.paid.toString(), remainingIqd: p.remaining.toString(), impliedRate: r, fullSettlement: p.remaining.isZero() } });
+    return { receiptId: rec.id as string, docNo: posted.docNo as string, usd: p.usd.toString(), settledIqd: p.paid.toString(), impliedRate: r, outstanding: p.remaining.toString(), status: p.remaining.isZero() ? "PAID" : "PARTIAL" };
+  });
+}
+
+/** Edit a POSTED USD-against-dinar receipt keeping its number; the figures are re-planned against the balance WITHOUT this receipt. */
+export async function amendUsdReceipt(tx: Tx, who: Principal, actor: Actor, id: string, i: z.infer<typeof usdReceiptUpdateSchema>) {
+  const [r] = await tx`SELECT * FROM customer_receipts WHERE id = ${id} FOR UPDATE`;
+  if (!r) throw notFound();
+  if (r.status !== "POSTED") throw conflict("NOT_POSTED", "التعديل بهذه الطريقة للسندات المرحّلة فقط");
+  if (!r.usd_settlement) throw badRequest("NOT_USD_SETTLEMENT", "هذا ليس سند استلام دولار مقابل فاتورة دينار");
+  if (r.version !== i.version) throw conflict("VERSION_CONFLICT", "تم تعديل السند من جهة أخرى؛ أعد فتحه");
+  await unpostReceipt(tx, actor, id, "تعديل سند قبض بالدولار");
+  const p = await planUsd(tx, i);                                                  // balance now excludes this receipt: the user confirms/enters figures against that
+  const rate = p.rate.toString();
+  await tx`UPDATE customer_receipts SET doc_date = ${i.docDate}, customer_id = ${i.customerId}, cash_account_id = ${i.cashAccountId}, currency = 'USD', exchange_rate_snapshot = ${rate}, settlement_rate = ${rate}, amount = ${p.usd.toString()},
+      notes = ${i.notes ?? null}, outstanding_before = ${p.outstanding.toString()}, remaining_after = ${p.remaining.toString()}, updated_at = now() WHERE id = ${id}`;
+  await writeAllocs(tx, who.companyId, id, [{ invoiceId: i.invoiceId, amount: p.paid.toString() }]);
+  const h = await postReceipt(tx, who, actor, id);
+  await audit(tx, actor, { action: "receipt.amend", entityType: "customer_receipt", entityId: id, before: { amount: r.amount, remainingAfter: r.remaining_after, docNo: r.doc_no }, after: { usd: p.usd.toString(), settledIqd: p.paid.toString(), remainingIqd: p.remaining.toString(), impliedRate: rate } });
+  return h;
 }

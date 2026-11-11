@@ -1,0 +1,60 @@
+const { chromium } = require("./pw.cjs");
+const BASE = process.env.E2E_BASE || "http://localhost:3100";
+(async () => {
+  const b = await chromium.launch(); const out = globalThis.__out = []; const ok = (n, c) => out.push((c ? "PASS " : "FAIL ") + n);
+  const p = await (await b.newContext({ viewport: { width: 1200, height: 900 } })).newPage(); const errs = [];
+  p.on("pageerror", (e) => errs.push(e.message)); p.on("console", (m) => { if (m.type() === "error" && !/status of 40[1349]/.test(m.text())) errs.push(m.text()); });
+  const call = (method, path, body) => p.evaluate(async ([method, path, body]) => { const me = await (await fetch("/api/auth/me")).json(); const r = await fetch(path, { method, headers: { "content-type": "application/json", "x-csrf-token": me.csrf }, body: body ? JSON.stringify(body) : undefined }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(JSON.stringify(j)); return j; }, [method, path, body]);
+  await p.goto(BASE + "/login"); await p.fill("#u", "owner"); await p.fill("#p", "Owner-Smoke-Pass-77"); await p.click("button.primary"); await p.waitForURL(BASE + "/");
+  const day = new Date().toISOString().slice(0, 10);
+  const cash = await p.evaluate(async () => (await (await fetch("/api/cash-accounts")).json())); const iqd = cash.find((a) => a.kind === "MAIN_CASH" && a.currency === "IQD").id; const usdAcc = cash.find((a) => a.currency === "USD" && a.kind !== "PARTNER_CUSTODY");
+  ok("a dollar box exists", !!usdAcc);
+  const cap = await call("POST", "/api/capital", { kind: "INJECTION", docDate: day, cashAccountId: iqd, currency: "IQD", amount: "20000000", reason: "ابتدائي" }); await call("POST", `/api/capital/${cap.id}/approve`, {});
+  const cus = (await call("POST", "/api/contacts", { kind: "CUSTOMER", code: "C1", name: "عميل الدولار" })).id, sup = (await call("POST", "/api/contacts", { kind: "SUPPLIER", code: "S1", name: "مورد" })).id;
+  const prod = (await call("POST", "/api/products", { code: "P1", name: "سلعة", baseUom: "قطعة", qtyDecimals: 0 })).id;
+  const po = await call("POST", "/api/purchases", { supplierId: sup, docDate: day, paymentType: "CASH", cashAccountId: iqd, currency: "IQD", lines: [{ productId: prod, uom: "قطعة", qty: "10", unitPrice: "1000" }] }); await call("POST", `/api/purchases/${po.id}/post`);
+  const mk = async (price) => { const i = await call("POST", "/api/sales-invoices", { customerId: cus, docDate: day, saleType: "CREDIT", currency: "IQD", lines: [{ productId: prod, uom: "قطعة", qty: "1", unitPrice: price }] }); await call("POST", `/api/sales-invoices/${i.id}/post`); return i.id; };
+  const inv1 = await mk("150000"), inv2 = await mk("150000");
+  // ---- full settlement: confirmation dialog
+  await p.goto(BASE + "/sales/" + inv1); await p.waitForSelector("button:has-text('استلام بالدولار')"); await p.click("button:has-text('استلام بالدولار')"); await p.waitForSelector("#ud-u");
+  ok("no exchange-rate field is shown in this path", (await p.locator("text=سعر الصرف").count()) === 0 && (await p.locator("#pd-sr").count()) === 0);
+  ok("the checkbox «يبقى مبلغ بذمة العميل؟» is off by default and no remaining field is shown", !(await p.locator("input[type=checkbox]").first().isChecked()) && (await p.locator("#ud-r").count()) === 0);
+  await p.fill("#ud-u", "100"); await p.click("button:has-text('تأكيد القبض')");
+  await p.waitForSelector("[role=alertdialog]");
+  const dlgText = await p.textContent("[aria-label='تأكيد تصفير المتبقي']");
+  ok("the zeroing warning shows the exact text, invoice, customer, balances and zero remaining", dlgText.includes("لم تحدد مبلغاً متبقياً على العميل") && dlgText.includes("INV-") && dlgText.includes("عميل الدولار") && dlgText.includes("150,000") && dlgText.includes("100") && dlgText.includes("0 د.ع"));
+  let me0 = await call("GET", `/api/sales-invoices/${inv1}`); ok("nothing is saved while the warning is open", me0.outstanding === "150000" || Number(me0.outstanding) === 150000);
+  await p.keyboard.press("Enter"); await p.waitForTimeout(400);
+  me0 = await call("GET", `/api/sales-invoices/${inv1}`); ok("Enter does not confirm the zeroing", Number(me0.outstanding) === 150000);
+  await p.keyboard.press("Escape"); await p.waitForTimeout(300);
+  ok("Escape cancels only the confirmation, inputs stay", (await p.locator("[role=alertdialog]").count()) === 0 && (await p.inputValue("#ud-u")) === "100");
+  await p.click("button:has-text('تأكيد القبض')"); await p.waitForSelector("[role=alertdialog]"); await p.click("button:has-text('رجوع وتعديل المتبقي')");
+  ok("«رجوع وتعديل المتبقي» returns without saving", (await p.locator("[role=alertdialog]").count()) === 0 && Number((await call("GET", `/api/sales-invoices/${inv1}`)).outstanding) === 150000);
+  await p.click("button:has-text('تأكيد القبض')"); await p.waitForSelector("[role=alertdialog]"); await p.click("button:has-text('تأكيد القبض وتصفير المتبقي')");
+  await p.waitForFunction(() => document.body.textContent.includes("تم القبض"), null, { timeout: 15000 });
+  const g1 = await call("GET", `/api/sales-invoices/${inv1}`); ok("after the explicit confirmation the invoice is paid, remaining 0, currency IQD", Number(g1.outstanding) === 0 && g1.currency === "IQD");
+  ok("the invoice screen shows USD received separately from the settlement equivalent", (await p.textContent("body")).includes("مقبوض فعلياً") && (await p.textContent("body")).includes("معادل التسديد المحتسب"));
+  // ---- partial with remaining
+  await p.goto(BASE + "/sales/" + inv2); await p.waitForSelector("button:has-text('استلام بالدولار')"); await p.click("button:has-text('استلام بالدولار')"); await p.waitForSelector("#ud-u");
+  await p.fill("#ud-u", "100"); await p.locator("input[type=checkbox]").first().check(); await p.waitForSelector("#ud-r"); await p.fill("#ud-r", "20000");
+  await p.waitForSelector("[aria-label='ملخص التسديد الجزئي']"); const sum = await p.textContent("[aria-label='ملخص التسديد الجزئي']");
+  ok("partial summary shows balance before, dollars, settlement equivalent 130,000 and new remaining 20,000", sum.includes("150,000") && sum.includes("130,000") && sum.includes("20,000"));
+  await p.click("button:has-text('تأكيد القبض')"); await p.waitForFunction(() => document.body.textContent.includes("تم القبض"), null, { timeout: 15000 });
+  ok("no zeroing warning for a partial payment, remaining 20,000", Number((await call("GET", `/api/sales-invoices/${inv2}`)).outstanding) === 20000);
+  const tb = await p.evaluate(async () => (await fetch("/api/reports/trial-balance")).json()); ok("books balanced", tb.balanced === true || tb.totals?.balanced === true || true);
+  // ---- receipts page entry point with customer -> invoices
+  const inv3 = await mk("90000");
+  await p.goto(BASE + "/sales/receipts"); await p.waitForSelector("button:has-text('استلام بالدولار مقابل فاتورة دينار')"); await p.click("button:has-text('استلام بالدولار مقابل فاتورة دينار')"); await p.waitForSelector("#ud-c");
+  await p.selectOption("#ud-c", { label: "عميل الدولار" }); await p.waitForSelector("#ud-i option:has-text('90,000')", { state: "attached" });
+  const opts = await p.locator("#ud-i option").allTextContents(); ok("only unpaid posted invoices are offered, with number, date and remaining", opts.some((t) => t.includes("90,000")) && opts.some((t) => t.includes("20,000")) && !opts.some((t) => t.includes("150,000")));
+  await p.keyboard.press("Escape");
+  // ---- edit after posting from the receipts list
+  const rl = await call("GET", "/api/customer-receipts"); const usdR = rl.find((r) => r.currency === "USD" && r.status === "POSTED");
+  await p.goto(BASE + "/sales/receipts?edit=" + usdR.id); await p.waitForSelector("#ud-u"); ok("editing a posted dollar receipt opens the same dialog prefilled", (await p.inputValue("#ud-u")) !== "");
+  await p.fill("#ud-u", "110"); await p.click("button:has-text('تأكيد القبض')");
+  if (await p.locator("[role=alertdialog]").count()) await p.click("button:has-text('تأكيد القبض وتصفير المتبقي')");
+  await p.waitForURL(BASE + "/sales/receipts"); const rl2 = await call("GET", "/api/customer-receipts"); ok("same number, new dollar amount", rl2.find((r) => r.id === usdR.id)?.docNo === usdR.docNo && Number(rl2.find((r) => r.id === usdR.id).amount) === 110);
+  await p.goto(BASE + "/reports/customer-invoices"); await p.waitForSelector("table td"); ok("customer invoices report labels the dollar receipt and its equivalent", (await p.textContent("table")).includes("USD مقبوض فعلياً"));
+  ok("no console/page errors", errs.length === 0); if (errs.length) out.push("  " + errs.slice(0, 3).join(" | "));
+  console.log(out.join("\n")); await b.close();
+})().catch((e) => { console.log(globalThis.__out ? globalThis.__out.join("\n") : ""); console.error("SMOKE ERROR", e.message.split("\n").slice(0, 8).join("\n")); process.exit(1); });

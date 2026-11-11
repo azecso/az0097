@@ -9,9 +9,10 @@ import { MsgBox, StatusBadge, useAction, useLoad } from "@/components/ui";
 import { Attach } from "@/components/attach";
 import { Modal } from "@/components/modal";
 import { CollectDialog } from "@/components/pay-dialog";
+import { UsdReceiptDialog } from "@/components/usd-receipt-dialog";
 
 interface Line { id: string; lineNo: number; productCode: string; productName: string; uom: string; qty: string; qtyBase: string; unitPrice: string; lineDiscount: string; lineTotal: string; delivered: string; returned: string; profitClass?: string }
-interface Rc { id: string; docNo: string; docDate: string; currency: string; settlementRate: string | null; auto: boolean; amount: string; external: string }
+interface Rc { id: string; docNo: string; docDate: string; currency: string; settlementRate: string | null; auto: boolean; amount: string; external: string; usdSettlement?: boolean; usdReceived?: string; remainingAfter?: string | null }
 interface Doc { breakdown?: { invoiced: string; deliveredValue: string; deliveredRatio: string; collected: string; external: string; remaining: string; advanceOnUndelivered: string; eligibleProfitBase: string; outside?: { excludedNet: string; excludedCost: string; marginBase: string; recordedOutside: string; cashCollected: string } | null }; id: string; customerId: string; docNo: string | null; draftRef: string; docDate: string; customerName: string; saleType: string; currency: string; exchangeRate: string; gross: string; discount: string; net: string; netBase: string; status: string; deliveryMode: string; cashAccountId: string | null;
   lines: Line[]; collected?: string; external?: string; outstanding?: string; returned?: string; cogsBase?: string | null; profit?: { grossProfitBase: string; adjustedProfitBase: string; collectedRatio: string; linkedProfitBase: string } | null; terms: string | null; receipts?: Rc[] }
 type Hist = { chain: { id: string; docNo: string; status: string; net: string; createdAt: string; replaced: boolean }[]; events: { id: string; at: string; user: string; action: string; reason: string | null }[] };
@@ -24,7 +25,7 @@ function Act({ label, onClick, reason, primary, danger, busy }: { label: string;
 export default function InvoiceView() {
   const { id } = useParams<{ id: string }>(); const router = useRouter(); const me = useMe();
   const { data: d, reload, err } = useLoad<Doc | null>(`/api/sales-invoices/${id}`, null); const { msg, busy, run, setMsg } = useAction(reload);
-  const [dlg, setDlg] = useState<"" | "collect" | "deliver" | "return" | "more">(""); const [hist, setHist] = useState<Hist | null>(null);
+  const [dlg, setDlg] = useState<"" | "collect" | "usd" | "deliver" | "return" | "more">(""); const [hist, setHist] = useState<Hist | null>(null);
   const [reason, setReason] = useState(""); const [ret, setRet] = useState<Record<string, string>>({}); const [dq, setDq] = useState<Record<string, string>>({});
   const cst = useLoad<{ unappliedCredit?: string } | null>(d && d.status === "POSTED" ? `/api/customers/${d.customerId}/statement` : null, null).data;
   if (!d) return <p>{err || "جارٍ التحميل…"}</p>;
@@ -41,6 +42,7 @@ export default function InvoiceView() {
     <div className="card" role="toolbar" aria-label="إجراءات الفاتورة" style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
       {d.status === "DRAFT" && <Act primary label="اعتماد" busy={busy} reason={can(me, "sales:approve") ? null : "لا تملك صلاحية الاعتماد"} onClick={() => void run(() => api(`/api/sales-invoices/${id}/post`, { method: "POST" }), "تم الاعتماد وإصدار الرقم النهائي")} />}
       {posted && <Act primary label="تسجيل تسديد" reason={noCollect} onClick={() => setDlg("collect")} />}
+      {posted && d.currency === "IQD" && <Act label="استلام بالدولار" reason={noCollect} onClick={() => setDlg("usd")} />}
       {posted && <Act label="تسجيل تسليم" reason={noDeliver} onClick={() => setDlg("deliver")} />}
       {posted && <Act label="مرتجع" reason={noReturn} onClick={() => setDlg("return")} />}
       <a href={`/print/sales-invoice/${id}`} target="_blank" rel="noreferrer"><button type="button">طباعة / PDF</button></a>
@@ -67,7 +69,7 @@ export default function InvoiceView() {
       {Number(d.breakdown.advanceOnUndelivered) > 0 && <div className="card stat"><div className="label">دفعة مقدّمة على بضاعة لم تُسلَّم</div><div className="value"><span className="num">{money(d.breakdown.advanceOnUndelivered)}</span></div><small>ليست ربحاً</small></div>}
       {canProfit && <div className="card stat"><div className="label">الربح المؤهَّل للتوزيع</div><div className="value"><span className="num">{money(d.breakdown.eligibleProfitBase)}</span></div><small>IQD</small></div>}</div></div>}
     {posted && (d.receipts?.length ?? 0) > 0 && <div className="card cards-as-list" style={{ marginTop: 12 }}><h2>سجل التسديد</h2><table><thead><tr><th>السند</th><th>التاريخ</th><th>المسدَّد من الفاتورة</th><th>تسوية غير نقدية</th><th>سعر التحويل</th><th></th></tr></thead>
-      <tbody>{d.receipts!.map((r) => <tr key={r.id}><td><span className="num">{r.docNo}</span>{r.auto ? " (تلقائي)" : ""}</td><td><span className="num">{r.docDate}</span></td><td><span className="num">{money(r.amount)} {d.currency}</span></td><td>{Number(r.external) > 0 ? <span className="num">{money(r.external)}</span> : "—"}</td><td>{r.settlementRate ? <span className="num">{money(r.settlementRate)}</span> : "—"}</td><td><a href={`/print/receipt/${r.id}`} target="_blank" rel="noreferrer">طباعة</a>{can(me, "voucher:cancel") && <> · <Link href={`/sales/receipts?edit=${r.id}`}>تعديل القبض</Link></>}</td></tr>)}</tbody></table></div>}
+      <tbody>{d.receipts!.map((r) => <tr key={r.id}><td><span className="num">{r.docNo}</span>{r.auto ? " (تلقائي)" : ""}</td><td><span className="num">{r.docDate}</span></td><td>{r.usdSettlement ? <><b className="num">{money(r.usdReceived ?? "0")} USD</b> مقبوض فعلياً<br /><small>معادل التسديد المحتسب: <span className="num">{money(r.amount)} {d.currency}</span> · المتبقي بعده: <span className="num">{money(r.remainingAfter ?? "0")} {d.currency}</span></small></> : <span className="num">{money(r.amount)} {d.currency}</span>}</td><td>{Number(r.external) > 0 ? <span className="num">{money(r.external)}</span> : "—"}</td><td>{r.settlementRate ? <span className="num">{money(r.settlementRate)}</span> : "—"}{r.usdSettlement && <small> (مستنتج)</small>}</td><td><a href={`/print/receipt/${r.id}`} target="_blank" rel="noreferrer">طباعة</a>{can(me, "voucher:cancel") && <> · <Link href={`/sales/receipts?edit=${r.id}`}>تعديل القبض</Link></>}</td></tr>)}</tbody></table></div>}
     {posted && d.currency === "IQD" && cst?.unappliedCredit && new Decimal(cst.unappliedCredit).gt(0) && outstanding.gt(0) && can(me, "voucher:create") && can(me, "voucher:approve") && (() => {
       const use = Decimal.min(new Decimal(cst.unappliedCredit), outstanding).toString();
       return <div className="card" style={{ marginTop: 12, borderColor: "var(--accent)" }}><strong>لهذا العميل رصيد دائن غير مخصَّص: {money(cst.unappliedCredit)} IQD</strong>
@@ -78,6 +80,7 @@ export default function InvoiceView() {
         {posted && <><td><span className="num">{money(l.delivered)}</span> / <span className="num">{money(l.qtyBase)}</span></td><td><span className="num">{money(l.returned)}</span></td></>}</tr>)}</tbody></table></div>
     <Attach entityType="sales_invoice" entityId={id} label="مرفقات الفاتورة (صور/إيصالات)" />
 
+    {dlg === "usd" && <UsdReceiptDialog customerId={d.customerId} invoiceId={id} onClose={() => setDlg("")} onDone={done} />}
     {dlg === "collect" && <CollectDialog invoiceId={id} customerName={d.customerName} docNo={d.docNo ?? d.draftRef} currency={d.currency} remaining={d.outstanding ?? "0"} isOwner={me.user.isOwner} outside={d.breakdown?.outside ?? null} onClose={() => setDlg("")} onDone={done} />}
 
     {dlg === "deliver" && <Modal title="تسجيل تسليم" onClose={() => setDlg("")}>
