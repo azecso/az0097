@@ -42,9 +42,10 @@ export async function computeSettlement(tx: Tx, i: z.infer<typeof settlementInpu
   // Cut-off: only documents dated on or before periodEnd count. Later collections/deliveries/returns belong to a later settlement.
   const invs = await tx`SELECT id, doc_no FROM sales_invoices WHERE status = 'POSTED' AND NOT is_opening AND doc_date <= ${i.periodEnd} ORDER BY doc_date, doc_no`;
   const lines: { invoiceId: string; docNo: string; adjustedProfit: string; ratio: string; linked: string; before: string; newly: string; after: string }[] = [];
-  let E = d(0);
+  let E = d(0), pending = d(0);
   for (const inv of invs) {
     const p = await invoiceProfit(tx, inv.id, i.periodEnd);
+    if (d(p.collectedRatio).isZero() && d(p.adjustedProfitBase).gt(0)) pending = pending.plus(p.adjustedProfitBase);         // earned but not yet fully paid + delivered: shown, never distributable
     const before = d((await tx`SELECT COALESCE(sum(l.newly_released), 0)::text AS v FROM profit_settlement_lines l JOIN profit_settlements s ON s.id = l.settlement_id WHERE l.invoice_id = ${inv.id} AND s.status = 'POSTED'`)[0]!.v);
     // profit already distributed outside the system (receipt "external" allocations) is never distributed again; it counts only up to the cut-off
     const ext = d((await tx`SELECT COALESCE(sum(a.amount), 0)::text AS v FROM receipt_allocations a JOIN customer_receipts cr ON cr.id = a.receipt_id WHERE a.invoice_id = ${inv.id} AND a.external AND cr.status = 'POSTED' AND cr.doc_date <= ${i.periodEnd}`)[0]!.v);
@@ -67,7 +68,7 @@ export async function computeSettlement(tx: Tx, i: z.infer<typeof settlementInpu
   }
   const sh = split5050(D, "IQD");
   const reserveAfter = resBefore.plus(B.lt(0) ? 0 : R).minus(Rel);
-  return { eligibleProfit: E.toString(), deductions: X.toString(), deductionsCum: cumNow.toString(), adjustments: A.toString(), lossCarriedIn: L.toString(), reserved: B.lt(0) ? "0" : R.toString(), reserveReleased: Rel.toString(),
+  return { eligibleProfit: E.toString(), pendingProfit: pending.toString(), deductions: X.toString(), deductionsCum: cumNow.toString(), adjustments: A.toString(), lossCarriedIn: L.toString(), reserved: B.lt(0) ? "0" : R.toString(), reserveReleased: Rel.toString(),
     reserveBefore: resBefore.toString(), reserveAfter: reserveAfter.toString(), periodResult: B.toString(),
     lossCovered: covered.toString(), lossCarriedOut: Lout.toString(), distributable: D.toString(), partnerShare: sh.partner.toString(), ownerShare: sh.owner.toString(), lines };
 }

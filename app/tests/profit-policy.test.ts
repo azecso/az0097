@@ -30,11 +30,11 @@ describe("A. an invoice collected before delivery is not profit; revenue follows
     expect((await collect(inv, "20000", "2026-02-02")).status).toBe(200);
     const pv = (await preview("2026-01-01", "2026-02-28")).body; expect(pv.eligibleProfit).toBe("0"); expect(pv.distributable).toBe("0");
   });
-  it("delivering 4 of 10 earns 4 x (2,000 - 1,000) = 4,000, revenue 8,000 moves from 2600 to 4100", async () => {
+  it("delivering 4 of 10 recognises 8,000 revenue (2600 -> 4100) but the invoice is NOT eligible yet (not fully delivered)", async () => {
     expect((await deliver(inv, "4", "2026-02-10")).status).toBe(200);
     expect(await acct("4100")).toBe(-8000); expect(await acct("2600")).toBe(-12000);
-    expect((await preview("2026-01-01", "2026-02-28")).body.eligibleProfit).toBe("4000");
-    expect((await w.getInvoice(inv)).breakdown).toMatchObject({ invoiced: "20000.0000", deliveredValue: "8000", collected: "20000.0000", remaining: "0", advanceOnUndelivered: "12000", eligibleProfitBase: "4000" });
+    expect((await preview("2026-01-01", "2026-02-28")).body.eligibleProfit).toBe("0");
+    expect((await w.getInvoice(inv)).breakdown).toMatchObject({ invoiced: "20000.0000", deliveredValue: "8000", collected: "20000.0000", remaining: "0", advanceOnUndelivered: "12000", eligibleProfitBase: "0" });
   });
   it("delivering the rest earns the full 10,000 and empties 2600 exactly", async () => {
     expect((await deliver(inv, "6", "2026-02-12")).status).toBe(200);
@@ -49,15 +49,15 @@ describe("A. an invoice collected before delivery is not profit; revenue follows
 });
 
 describe("B. cut-off: nothing dated after the period end leaks into an earlier settlement", () => {
-  it("a collection dated after the end is excluded, then picked up by the next period exactly once", async () => {
+  it("the collection that completes payment is dated after the cut-off: excluded from May, picked up by June exactly once", async () => {
     expect((await approve((await draft("2026-01-01", "2026-04-30")).body.id)).status).toBe(200);              // settle what exists so far (A's 10,000)
-    const inv = (await w.sale({ product: P, qty: "10", price: "3000", date: "2026-05-01" })).id;            // profit 20,000 when fully collected
-    await collect(inv, "15000", "2026-05-10");                                                               // half of 30,000 -> linked 10,000
-    await collect(inv, "15000", "2026-06-10");                                                               // after the May cut-off
-    const may = (await preview("2026-05-01", "2026-05-31")).body; expect(may.eligibleProfit).toBe("10000");
+    const inv = (await w.sale({ product: P, qty: "10", price: "3000", date: "2026-05-01" })).id;            // profit 20,000 when fully paid
+    await collect(inv, "15000", "2026-05-10");                                                               // half paid: a collection, not distributable
+    await collect(inv, "15000", "2026-06-10");                                                               // completes payment after the May cut-off
+    const may = (await preview("2026-05-01", "2026-05-31")).body; expect(may.eligibleProfit).toBe("0");
     const s1 = (await draft("2026-05-01", "2026-05-31")).body.id; expect((await approve(s1)).status).toBe(200);
-    const jun = (await preview("2026-06-01", "2026-06-30")).body; expect(jun.eligibleProfit).toBe("10000");
-    expect(jun.lines.find((l: any) => l.invoiceId === inv).before).toBe("10000");
+    const jun = (await preview("2026-06-01", "2026-06-30")).body; expect(jun.eligibleProfit).toBe("20000");
+    expect(jun.lines.find((l: any) => l.invoiceId === inv).before).toBe("0");
   });
   it("a delivery dated after the end is excluded from that settlement's profit", async () => {
     const inv = (await w.sale({ product: P, qty: "5", price: "2000", date: "2026-07-01", mode: "SEPARATE" })).id;

@@ -95,19 +95,19 @@ describe("losses are carried forward and covered before any later distribution",
   it("period result negative: no distribution, loss carried; later profit first covers the loss (no debt on the partner)", async () => {
     await w.buy({ product: P, qty: "100", price: "7000", date: "2026-07-01" });
     sale3 = (await w.sale({ product: P, qty: "100", price: "10000", date: "2026-07-15" })).id;
-    await collect(sale3, "100000", "2026-07-20");                                                       // 10% collected => linked 30,000
+    await collect(sale3, "100000", "2026-07-20");                                                       // 10% collected => just a collection, nothing eligible
     const e = await w.api(w.owner, w.R.expenses.POST, { method: "POST", body: { docDate: "2026-08-01", currency: "IQD", description: "مصاريف كبيرة", categoryId: await w.cat("صيانة"), amount: "500000", paymentMode: "ACCRUED" } });
     await w.api(w.owner, w.R.expensePost, { method: "POST", params: { id: e.body.id } });
     const pv = (await preview("2026-07-01", "2026-09-30")).body;
-    expect(pv.eligibleProfit).toBe("30000"); expect(pv.deductions).toBe("500000"); expect(pv.periodResult).toBe("-470000");
-    expect(pv.distributable).toBe("0"); expect(pv.lossCarriedOut).toBe("470000");
+    expect(pv.eligibleProfit).toBe("0"); expect(pv.deductions).toBe("500000"); expect(pv.periodResult).toBe("-500000");      // the expense is NOT hidden by deferring the profit
+    expect(pv.distributable).toBe("0"); expect(pv.lossCarriedOut).toBe("500000");
     const s3 = (await draft("2026-07-01", "2026-09-30")).body.id; expect((await approve(s3)).status).toBe(200);
     const none = await pay({ settlementId: s3, partnerKind: "OWNER", amount: "1", idempotencyKey: "loss-key-0001" });
     expect(none.status).toBe(409);                                                                       // nothing to pay (no share rows with value)
-    expect(Number((await overview()).lossCarriedForward)).toBe(470000);
-    await collect(sale3, "900000", "2026-10-05");                                                       // rest collected => linked 300,000 (270,000 newly)
+    expect(Number((await overview()).lossCarriedForward)).toBe(500000);
+    await collect(sale3, "900000", "2026-10-05");                                                       // paid in full => the whole 300,000 becomes eligible
     const pv2 = (await preview("2026-10-01", "2026-10-31")).body;
-    expect(pv2.eligibleProfit).toBe("270000"); expect(pv2.lossCarriedIn).toBe("470000"); expect(pv2.lossCovered).toBe("270000");
+    expect(pv2.eligibleProfit).toBe("300000"); expect(pv2.lossCarriedIn).toBe("500000"); expect(pv2.lossCovered).toBe("300000");
     expect(pv2.distributable).toBe("0"); expect(pv2.lossCarriedOut).toBe("200000");                     // loss absorbs the whole profit
     const s4 = (await draft("2026-10-01", "2026-10-31")).body.id; expect((await approve(s4)).status).toBe(200);
     expect(Number((await overview()).lossCarriedForward)).toBe(200000);
@@ -128,8 +128,8 @@ describe("losses are carried forward and covered before any later distribution",
     expect((await w.api(w.acct, w.R.settleReverse, { method: "POST", params: { id: latest.id }, body: { reason: "اختبار" } })).status).toBe(403);
     const r = await w.api(w.owner, w.R.settleReverse, { method: "POST", params: { id: latest.id }, body: { reason: "تصحيح الفترة" } });
     expect(r.status).toBe(200);
-    expect((await preview("2026-10-01", "2026-10-31")).body.eligibleProfit).toBe("270000");              // sale 3's 270,000 is available again; the November return is dated after the cut-off and does NOT leak into October
-    expect((await preview("2026-10-01", "2026-11-30")).body.eligibleProfit).toBe("240000");              // ...it only appears once the period reaches its date (-30,000)
+    expect((await preview("2026-10-01", "2026-10-31")).body.eligibleProfit).toBe("300000");              // sale 3's 300,000 is available again; the November return is dated after the cut-off and does NOT leak into October
+    expect((await preview("2026-10-01", "2026-11-30")).body.eligibleProfit).toBe("270000");              // ...it only appears once the period reaches its date (-30,000)
     expect((await w.tb()).balanced).toBe(true);
   });
   it("opening-balance receivables never count as profit", async () => {

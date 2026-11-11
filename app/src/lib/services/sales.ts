@@ -33,7 +33,7 @@ export async function invoiceFinancials(tx: Tx, invoiceId: string, asOf: string 
 /**
  * Profit figures of one invoice (base currency) as of a date (policy §2/§6):
  *  - only the DELIVERED share of the invoice is earned: recognised value = delivered qty / invoiced qty of each line, cost = FIFO cost of what was delivered;
- *  - linkedProfit = earned profit x MIN(1, net collected / earned value of the invoice in its own currency): cash received for goods not yet delivered is an advance, never profit;
+ *  - linkedProfit = the earned profit, but ONLY when the invoice is fully delivered and fully paid (net collected >= value in its own currency); otherwise 0 — a partial collection is just a collection;
  *  - it is a RESTRICTION indicator for distributing profit, not new accounting profit. Zero/negative earned value => 0.
  */
 export async function invoiceProfit(tx: Tx, invoiceId: string, asOf: string = FOREVER) {
@@ -54,7 +54,10 @@ export async function invoiceProfit(tx: Tx, invoiceId: string, asOf: string = FO
   }
   const adjRecB = recB.minus(ret!.vb), adjCogs = cogs.minus(ret!.cg), adjRecO = recO.minus(fin.returned);
   const grossProfit = recB.minus(cogs), adjustedProfit = adjRecB.minus(adjCogs);
-  const ratio = adjRecO.gt(0) ? Decimal.min(1, Decimal.max(0, d(fin.netCollected).div(adjRecO))) : d(0);
+  // Policy (owner decision): profit of an invoice becomes eligible for distribution ONLY when it is fully paid AND fully delivered. Partial collection is just a collection.
+  const fullyDelivered = lines.length > 0 && lines.every((l) => d(l.dq).gte(l.q));
+  const fullyPaid = d(fin.netCollected).gte(adjRecO) && adjRecO.gt(0);
+  const ratio = fullyDelivered && fullyPaid ? d(1) : d(0);
   return { grossProfitBase: grossProfit.toString(), adjustedProfitBase: adjustedProfit.toString(), collectedRatio: ratio.toDecimalPlaces(8).toString(), linkedProfitBase: roundMoney(adjustedProfit.mul(ratio), "IQD").toString(),
     deliveredRatio: qAll.gt(0) ? qDel.div(qAll).toDecimalPlaces(8).toString() : "0", recognizedNetBase: adjRecB.toString(), recognizedNetOrig: adjRecO.toDecimalPlaces(4).toString(), cogsBase: adjCogs.toString() };
 }

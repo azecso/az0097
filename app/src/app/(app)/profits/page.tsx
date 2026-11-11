@@ -8,7 +8,7 @@ import { MsgBox, PrintLink, useAction, useLoad } from "@/components/ui";
 
 interface Person { kind: string; name: string; externalDistributed: string; approved: string; paid: string; advancesDeducted: string; remainingApproved: string; pending: string; available: string }
 interface Payout { id: string; docNo: string; docDate: string; partner: string; partnerKind: string; amount: string; advancesDeducted: string; status: string; settlementNo?: string }
-interface Ov { period: { from: string | null; to: string }; invoicedProfit: string; collectedProfit: string; releasedBefore: string; newlyEligible: string; expenses: { total: string; byAccount: { code: string; name: string; amount: string }[]; other: string };
+interface Ov { pendingProfit?: string; period: { from: string | null; to: string }; invoicedProfit: string; collectedProfit: string; releasedBefore: string; newlyEligible: string; expenses: { total: string; byAccount: { code: string; name: string; amount: string }[]; other: string };
   lossCarriedIn: string; lossCovered: string; netProfit: string; distributable: string; lossCarriedOut: string; externalDistributed: string; shares: { owner: string; partner: string }; people: Person[]; liquidity: { cash: string; committed: string; available: string }; capital: string; payouts: Payout[] }
 interface Cash { id: string; name: string; currency: string; kind: string; countsTowardAvailable: boolean }
 const empty: Ov = { period: { from: null, to: "" }, invoicedProfit: "0", collectedProfit: "0", releasedBefore: "0", newlyEligible: "0", expenses: { total: "0", byAccount: [], other: "0" }, lossCarriedIn: "0", lossCovered: "0", netProfit: "0", distributable: "0", lossCarriedOut: "0", externalDistributed: "0", shares: { owner: "0", partner: "0" }, people: [], liquidity: { cash: "0", committed: "0", available: "0" }, capital: "0", payouts: [] };
@@ -37,7 +37,8 @@ export default function Profits() {
     <div className="card cards-as-list" style={{ marginTop: 12 }}><h2>بيان الربح{o.period.from ? ` (من ${o.period.from})` : ""} حتى {o.period.to}</h2>
       <table><tbody>
         <R k="إجمالي الربح على الفواتير (المفوتر، بعد المرتجعات)" v={o.invoicedProfit} />
-        <R k="الربح المحصَّل منه حتى الآن (يحق توزيعه)" v={o.collectedProfit} />
+        <R k="الربح المؤهل للتوزيع (فواتير مسدَّدة ومسلَّمة بالكامل فقط)" v={o.collectedProfit} />
+        <R k="ربح غير مؤهل بعد (لم تُسدَّد أو تُسلَّم بالكامل)" v={o.pendingProfit ?? "0"} />
         <R k="— منه معتمد في تسويات سابقة" v={o.releasedBefore} />
         <R k="الربح الجديد المؤهَّل في هذه الفترة" v={o.newlyEligible} strong />
         {o.expenses.byAccount.map((a) => <R key={a.code} k={`− ${a.name}`} v={a.amount} />)}

@@ -32,13 +32,13 @@ describe("TC-01 end to end: FIFO sale through an invoice", () => {
 });
 
 describe("TC-03 partial collection and collection-linked profit", () => {
-  it("invoice 1,000,000 / cost 700,000 / collected 500,000: gross profit 300,000, linked 150,000", async () => {
+  it("invoice 1,000,000 / cost 700,000 / collected 500,000: gross profit 300,000, eligible 0 until fully paid (partial collection is just a collection)", async () => {
     const P = await w.mkProduct("S3"); await w.buy({ product: P, qty: "100", price: "7000" });
     const inv = await w.sale({ product: P, qty: "100", price: "10000" });
     const rc = await w.api(w.owner, w.R.receipts.POST, { method: "POST", body: { customerId: w.ids.customer, docDate: "2026-03-05", cashAccountId: w.ids.cashIQD, currency: "IQD", amount: "500000", allocations: [{ invoiceId: inv.id, amount: "500000" }] } });
     expect((await w.api(w.owner, w.R.receiptPost, { method: "POST", params: { id: rc.body.id } })).status).toBe(200);
     const g = await w.getInvoice(inv.id);
-    expect(Number(g.profit.grossProfitBase)).toBe(300000); expect(Number(g.profit.linkedProfitBase)).toBe(150000); expect(Number(g.outstanding)).toBe(500000);
+    expect(Number(g.profit.grossProfitBase)).toBe(300000); expect(Number(g.profit.linkedProfitBase)).toBe(0); expect(Number(g.outstanding)).toBe(500000);
     const over = await w.api(w.owner, w.R.receipts.POST, { method: "POST", body: { customerId: w.ids.customer, docDate: "2026-03-06", cashAccountId: w.ids.cashIQD, currency: "IQD", amount: "600000", allocations: [{ invoiceId: inv.id, amount: "600000" }] } });
     expect(over.body.error.code).toBe("OVER_ALLOCATION");
   });
@@ -82,7 +82,7 @@ describe("TC-06 partner collects cash, then hands it over", () => {
 });
 
 describe("TC-07a customer return after a partial collection", () => {
-  it("returns 30 of 100: restocks into the ORIGINAL layer at 7,000, sales return 300,000, linked profit 120,000", async () => {
+  it("returns 30 of 100: restocks into the ORIGINAL layer at 7,000, sales return 300,000, eligible profit only once fully paid", async () => {
     const P = await w.mkProduct("S7"); await w.buy({ product: P, qty: "100", price: "7000" });
     const inv = await w.sale({ product: P, qty: "100", price: "10000" });
     const rc = await w.api(w.owner, w.R.receipts.POST, { method: "POST", body: { customerId: w.ids.customer, docDate: "2026-05-01", cashAccountId: w.ids.cashIQD, currency: "IQD", amount: "400000", allocations: [{ invoiceId: inv.id, amount: "400000" }] } });
@@ -94,7 +94,10 @@ describe("TC-07a customer return after a partial collection", () => {
     expect(Number(r.body.appliedToReceivable)).toBe(300000); expect(Number(r.body.customerCredit)).toBe(0);
     const g = await w.getInvoice(inv.id);
     expect(Number(g.outstanding)).toBe(300000);                                       // 1,000,000 - 400,000 collected - 300,000 returned
-    expect(Number(g.profit.adjustedProfitBase)).toBe(210000); expect(Number(g.profit.linkedProfitBase)).toBe(120000);   // (1,000,000-300,000) - (700,000-210,000) = 210,000; x 400/700
+    expect(Number(g.profit.adjustedProfitBase)).toBe(210000); expect(Number(g.profit.linkedProfitBase)).toBe(0);   // (1,000,000-300,000) - (700,000-210,000) = 210,000 earned; not eligible while 300,000 is still owed
+    const rc2 = await w.api(w.owner, w.R.receipts.POST, { method: "POST", body: { customerId: w.ids.customer, docDate: "2026-05-03", cashAccountId: w.ids.cashIQD, currency: "IQD", amount: "300000", allocations: [{ invoiceId: inv.id, amount: "300000" }] } });
+    await w.api(w.owner, w.R.receiptPost, { method: "POST", params: { id: rc2.body.id } });
+    expect(Number((await w.getInvoice(inv.id)).profit.linkedProfitBase)).toBe(210000);                 // fully paid + fully delivered => the whole adjusted profit becomes eligible
     const lots = (await w.api(w.owner, w.R.lots, { params: { id: P } })).body;
     expect(lots.length).toBe(1); expect(Number(lots[0].qtyRemaining)).toBe(30); expect(Number(lots[0].unitCostBase)).toBe(7000);   // same layer, same cost
     expect((await w.recon()).ok).toBe(true); expect((await w.tb()).balanced).toBe(true);
@@ -104,7 +107,7 @@ describe("TC-07a customer return after a partial collection", () => {
     // reversing the return takes the stock back and reopens the receivable
     const rv = await w.api(w.owner, w.R.sreturnReverse, { method: "POST", params: { id: rd.body.id }, body: { reason: "خطأ" } });
     expect(rv.status).toBe(200);
-    expect(Number((await w.getInvoice(inv.id)).outstanding)).toBe(600000);
+    expect(Number((await w.getInvoice(inv.id)).outstanding)).toBe(300000);
     expect((await w.recon()).ok).toBe(true);
   });
   it("return of a fully paid invoice becomes customer credit (or a cash refund), then credit pays another invoice", async () => {

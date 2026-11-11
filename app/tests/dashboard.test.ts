@@ -24,9 +24,11 @@ describe("dashboard shows the real ledger and always balances", () => {
     expect(Number(b.period.revenue)).toBe(1000000); expect(Number(b.period.cogs)).toBe(700000); expect(Number(b.period.grossProfit)).toBe(300000);
     expect(Number(b.period.expenses)).toBe(100000); expect(Number(b.period.netProfit)).toBe(200000); expect(Number(b.period.collections)).toBe(600000);
     expect(b.integrity.equationDifference).toBe("0"); expect(b.integrity.balanced).toBe(true); expect(b.integrity.inventoryReconciled).toBe(true);
-    // distributable now: collection-linked profit 300,000 x 600/1000 = 180,000 minus accrued expenses 100,000 = 80,000 -> 40,000 each
-    expect(Number(b.distributable.eligibleProfit)).toBe(180000); expect(Number(b.distributable.deductions)).toBe(100000);
-    expect(Number(b.distributable.distributable)).toBe(80000); expect(Number(b.distributable.ownerShare)).toBe(40000);
+    // 600,000 of 1,000,000 collected: only a collection — NOTHING is eligible yet, but the expense is still deducted (no hiding of costs)
+    expect(Number(b.distributable.eligibleProfit)).toBe(0); expect(Number(b.distributable.deductions)).toBe(100000);
+    expect(Number(b.distributable.distributable)).toBe(0); expect(Number(b.distributable.lossCarriedOut)).toBe(100000);
+    await rc(w.ids.cashIQD, "400000");                                                                                  // fully paid + fully delivered => 300,000 becomes eligible
+    const b2 = await get(); expect(Number(b2.distributable.eligibleProfit)).toBe(300000); expect(Number(b2.distributable.distributable)).toBe(200000); expect(Number(b2.distributable.ownerShare)).toBe(100000);
     expect(b.topProducts[0].code).toBe("D1"); expect(Number(b.topProducts[0].revenue)).toBe(1000000); expect(Number(b.topProducts[0].cost)).toBe(700000);
     expect(b.topCustomers[0].name).toBe("عميل الاختبار"); expect(b.expensesByCategory[0].name).toBe("إيجارات");
     expect(b.series.length).toBe(12); expect(Number(b.series[11].revenue)).toBe(1000000);

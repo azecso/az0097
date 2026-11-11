@@ -54,7 +54,7 @@ export async function profitOverview(tx: Tx) {
   const liq = await distributableLiquidity(tx);
   return {
     period: { from: periodStart === "2000-01-01" ? null : periodStart, to: periodEnd },
-    invoicedProfit: invoiced, collectedProfit: released.plus(live.eligibleProfit).plus(people.reduce((x, p) => x.plus(p.externalDistributed), d(0))).toString(), releasedBefore: released.toString(), newlyEligible: live.eligibleProfit,
+    invoicedProfit: invoiced, collectedProfit: released.plus(live.eligibleProfit).plus(people.reduce((x, p) => x.plus(p.externalDistributed), d(0))).toString(), releasedBefore: released.toString(), pendingProfit: live.pendingProfit, newlyEligible: live.eligibleProfit,
     expenses: { total: live.deductions, byAccount, other: other.toString() }, lossCarriedIn: live.lossCarriedIn, lossCovered: live.lossCovered, netProfit: live.periodResult, distributable: live.distributable, lossCarriedOut: live.lossCarriedOut,
     externalDistributed: people.reduce((s, p) => s.plus(p.externalDistributed), d(0)).toString(),
     shares: { owner: live.ownerShare, partner: live.partnerShare }, people, liquidity: { cash: liq.cash.toString(), committed: liq.committed.toString(), available: liq.available.toString() },
