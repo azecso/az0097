@@ -14,11 +14,12 @@ export const lotsOf = (tx: Tx, productId: string) => tx`
          l.origin_doc_type AS "originType", l.source_lot_id AS "sourceLotId"
   FROM stock_lots l JOIN stock_locations sl ON sl.id = l.location_id WHERE l.product_id = ${productId} ORDER BY l.received_at, l.seq`;
 
-export async function trialBalance(tx: Tx) {
+export async function trialBalance(tx: Tx, asOf?: string) {
   const rows = await tx`SELECT a.code, a.name, a.type, COALESCE(sum(jl.debit_base), 0)::text AS debit, COALESCE(sum(jl.credit_base), 0)::text AS credit
-    FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id = a.id GROUP BY a.code, a.name, a.type ORDER BY a.code`;
+    FROM accounts a LEFT JOIN (SELECT l.account_id, l.debit_base, l.credit_base FROM journal_lines l JOIN journal_entries e ON e.id = l.entry_id WHERE (${asOf ?? null}::date IS NULL OR e.entry_date <= ${asOf ?? null})) jl ON jl.account_id = a.id
+    GROUP BY a.code, a.name, a.type ORDER BY a.code`;
   const td = rows.reduce((s, r) => s.plus(r.debit), d(0)), tc = rows.reduce((s, r) => s.plus(r.credit), d(0));
-  return { rows: rows.filter((r) => !d(r.debit).isZero() || !d(r.credit).isZero()), totalDebit: td.toString(), totalCredit: tc.toString(), balanced: td.eq(tc) };
+  return { rows: rows.filter((r) => !d(r.debit).isZero() || !d(r.credit).isZero()), totalDebit: td.toString(), totalCredit: tc.toString(), balanced: td.eq(tc), ...(asOf ? { asOf } : {}) };
 }
 
 /** Sub-ledger vs general ledger: FIFO layers must equal accounts 1300/1310 to the dinar, always. */

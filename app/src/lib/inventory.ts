@@ -55,12 +55,15 @@ const LOT_COLS = (tx: Tx) => tx`id, product_id, location_id, received_at, qty_re
 /** FIFO outflow of `qtyBase` of a product from a location. Throws 409 INSUFFICIENT_STOCK (nothing is written) if short. */
 export async function consumeFifo(tx: Tx, companyId: string, a: {
   productId: string; locationId: string; qtyBase: Decimal.Value; type: MovementType; docType: string; docId: string; docLineId: string; at: Date | string;
+  /** Document date (YYYY-MM-DD): only layers received on or before this day may be consumed — an outflow never takes goods that had not arrived yet. */
+  onOrBefore?: string;
 }): Promise<{ cost: Decimal; parts: Part[] }> {
+  const by = a.onOrBefore ?? null;
   const lots = (await tx`SELECT ${LOT_COLS(tx)} FROM stock_lots WHERE product_id = ${a.productId} AND location_id = ${a.locationId} AND qty_remaining > 0
-                         ORDER BY received_at, seq FOR UPDATE`) as unknown as Lot[];
+                         AND (${by}::date IS NULL OR received_at < (${by}::date + 1)) ORDER BY received_at, seq FOR UPDATE`) as unknown as Lot[];
   let need = d(a.qtyBase); const parts: Part[] = [];
   const available = lots.reduce((s, l) => s.plus(l.qty_remaining), d(0));
-  if (available.lt(need)) throw conflict("INSUFFICIENT_STOCK", `المتاح ${available} أقل من المطلوب ${need}`);
+  if (available.lt(need)) throw conflict("INSUFFICIENT_STOCK", by ? `المتاح حتى ${by}: ${available} أقل من المطلوب ${need}` : `المتاح ${available} أقل من المطلوب ${need}`);
   for (const lot of lots) {
     if (need.lte(0)) break;
     const take = Decimal.min(need, d(lot.qty_remaining));

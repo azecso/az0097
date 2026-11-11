@@ -58,7 +58,7 @@ export async function postTransfer(tx: Tx, who: Principal, actor: Actor, id: str
   const docNo = (await tx`SELECT next_document_number(${who.companyId}, 'stock_transfer', ${yearOf(date)}) AS n`)[0]!.n as string;
   let total = d(0);
   for (const l of lines) {
-    const out = await consumeFifo(tx, who.companyId, { productId: l.product_id, locationId: t.from_location_id, qtyBase: l.qty_base, type: "TRANSFER_OUT", docType: "stock_transfer", docId: id, docLineId: l.id, at: new Date() });
+    const out = await consumeFifo(tx, who.companyId, { productId: l.product_id, locationId: t.from_location_id, qtyBase: l.qty_base, type: "TRANSFER_OUT", docType: "stock_transfer", docId: id, docLineId: l.id, at: new Date(), onOrBefore: date });
     for (const p of out.parts) {
       await receiveLot(tx, who.companyId, { productId: l.product_id, locationId: t.to_location_id, originDocType: "stock_transfer", originDocId: id, originLineId: l.id,
         receivedAt: p.lot.received_at, qtyBase: p.qty, totalCostBase: p.cost, unitCostOrig: p.lot.unit_cost_orig, currency: p.lot.currency, fx: p.lot.fx_rate_snapshot, sourceLotId: p.lot.id, movement: "TRANSFER_IN" });

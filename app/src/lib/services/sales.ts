@@ -307,7 +307,7 @@ export async function postDelivery(tx: Tx, who: Principal, actor: Actor, id: str
   for (const l of lines) {
     const done = (await tx`SELECT COALESCE(sum(dl.qty_base), 0)::text AS q, COALESCE(sum(dl.revenue_net_base), 0)::text AS rn, COALESCE(sum(dl.revenue_gross_base), 0)::text AS rg FROM delivery_lines dl JOIN delivery_notes n ON n.id = dl.delivery_id WHERE dl.sales_line_id = ${l.sales_line_id} AND n.status = 'POSTED'`)[0]!;
     if (d(done.q).plus(l.qty_base).gt(l.sold)) throw conflict("DELIVERY_EXCEEDS_INVOICED", "الكمية المسلّمة تتجاوز المفوترة");
-    const out = await consumeFifo(tx, who.companyId, { productId: l.product_id, locationId: l.location_id, qtyBase: l.qty_base, type: "SALE_OUT", docType: "delivery_note", docId: id, docLineId: l.id, at: new Date() });
+    const out = await consumeFifo(tx, who.companyId, { productId: l.product_id, locationId: l.location_id, qtyBase: l.qty_base, type: "SALE_OUT", docType: "delivery_note", docId: id, docLineId: l.id, at: new Date(), onOrBefore: date });
     let rn = d(0), rg = d(0);
     if (invRow!.revenue_deferred) {                                                  // the delivered share of the invoiced value (the last delivery takes the exact remainder)
       const [sl] = await tx`SELECT net_line_base, line_total_base, qty_base FROM sales_lines WHERE id = ${l.sales_line_id}`;

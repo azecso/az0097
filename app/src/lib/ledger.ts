@@ -26,6 +26,7 @@ export async function postJournal(tx: Tx, actor: Actor, e: {
   const accs = await tx`SELECT id, code FROM accounts WHERE code IN ${tx(codes)} AND is_active AND is_postable`;
   const byCode = new Map(accs.map((a) => [a.code as string, a.id as string]));
   for (const c of codes) if (!byCode.has(c)) throw badRequest("ACCOUNT_NOT_FOUND", c);
+  await tx`SELECT pg_advisory_xact_lock_shared(hashtext(${actor.companyId + ":period:" + e.date.slice(0, 7)}))`;       // a concurrent close of this month waits for us (and we see it once it commits)
   const closed = await tx`SELECT 1 FROM accounting_periods WHERE period_month = date_trunc('month', ${e.date}::date)::date AND status = 'CLOSED'`;
   if (closed.length) throw conflict("PERIOD_CLOSED", `الفترة المحاسبية ${e.date.slice(0, 7)} مقفلة؛ لا يمكن الترحيل فيها`);
   const [no] = await tx`SELECT next_document_number(${actor.companyId}, 'journal_entry', ${yearOf(e.date)}) AS n`;
