@@ -14,7 +14,7 @@ const MAX_PREPARED_AGE_MS = () => Number(process.env.RESET_PREPARED_MAX_MINUTES 
 
 /** Tables emptied by the reset (the database function truncates exactly these; tests assert the two stay in sync). Attachments are handled row-wise (logo/signature kept). */
 export const WIPED_TABLES = ["accounting_periods", "capital_returns", "capital_transactions", "cash_movements", "cash_transfers", "contacts", "customer_receipts", "customer_refunds", "project_entries", "projects", "delivery_lines", "delivery_notes", "employees",
-  "expense_payments", "expenses", "inventory_count_lines", "inventory_counts", "journal_entries", "journal_lines", "opening_balances", "payroll_accruals", "payroll_payments", "personal_advances", "personal_debts",
+  "expense_payments", "expenses", "inventory_count_lines", "inventory_counts", "journal_entries", "journal_lines", "opening_balances", "payroll_accruals", "payroll_payments", "personal_advances", "personal_debts", "personal_debt_payments",
   "product_uoms", "products", "profit_payouts", "profit_settlement_lines", "profit_settlement_shares", "profit_settlements", "purchase_charges", "purchase_lines", "purchase_orders", "purchase_return_lines",
   "purchase_returns", "receipt_allocations", "sales_invoices", "sales_lines", "sales_quote_lines", "sales_quotes", "sales_return_lines", "sales_returns", "stock_lot_consumptions", "stock_lot_returns", "stock_lots",
   "stock_movements", "stock_transfer_lines", "stock_transfers", "supplier_payment_allocations", "supplier_payments", "sync_conflicts", "sync_operations"] as const;

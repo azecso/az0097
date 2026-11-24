@@ -1,0 +1,27 @@
+const { chromium } = require("./pw.cjs");
+const BASE = process.env.E2E_BASE || "http://localhost:3100";
+(async () => {
+  const b = await chromium.launch(); const out = globalThis.__out = []; const ok = (n, c) => out.push((c ? "PASS " : "FAIL ") + n);
+  const p = await (await b.newContext({ viewport: { width: 1200, height: 900 } })).newPage(); const errs = [];
+  p.on("pageerror", (e) => errs.push(e.message)); p.on("console", (m) => { if (m.type() === "error" && !/status of 40[1349]/.test(m.text())) errs.push(m.text()); });
+  const call = (method, path, body) => p.evaluate(async ([method, path, body]) => { const me = await (await fetch("/api/auth/me")).json(); const r = await fetch(path, { method, headers: { "content-type": "application/json", "x-csrf-token": me.csrf }, body: body ? JSON.stringify(body) : undefined }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(JSON.stringify(j)); return j; }, [method, path, body]);
+  await p.goto(BASE + "/login"); await p.fill("#u", "owner"); await p.fill("#p", "Owner-Smoke-Pass-77"); await p.click("button.primary"); await p.waitForURL(BASE + "/");
+  const day = new Date().toISOString().slice(0, 10);
+  const cash = await p.evaluate(async () => (await (await fetch("/api/cash-accounts")).json())); const iqd = cash.find((a) => a.kind === "MAIN_CASH" && a.currency === "IQD");
+  const cap = await call("POST", "/api/capital", { kind: "INJECTION", docDate: day, cashAccountId: iqd.id, currency: "IQD", amount: "2000000", reason: "ابتدائي" }); await call("POST", `/api/capital/${cap.id}/approve`, {});
+  const balance = async () => Number((await call("GET", "/api/cash-accounts")).find((a) => a.id === iqd.id).balance ?? NaN);
+  const before = await balance();
+  await p.goto(BASE + "/capital"); await p.waitForSelector("#am");
+  await p.selectOption("#am", "DEBT"); ok("choosing «دين شخصي» hides the cash box field", (await p.locator("#ac").count()) === 0);
+  await p.selectOption("#w", "OTHER"); await p.fill("#ap", "المدير أحمد"); await p.fill("#aa", "150000"); await p.fill("#an", "سلفة شخصية");
+  await p.click("button:has-text('حفظ')"); await p.waitForFunction(() => document.body.textContent.includes("لم يتأثر الصندوق"), null, { timeout: 15000 });
+  await p.waitForFunction(() => document.body.textContent.includes("المدير أحمد"), null, { timeout: 15000 });
+  const t = await p.textContent("body"); ok("the debt appears in «صندوق الدين الشخصي» with the person and 150,000", t.includes("صندوق الدين الشخصي") && t.includes("المدير أحمد") && t.includes("150,000"));
+  if (!Number.isNaN(before)) ok("the cash box did not change", (await balance()) === before);
+  await p.locator("button:has-text('تسديد')").first().click(); await p.waitForSelector("#pa"); await p.fill("#pa", "50000"); await p.click("button:has-text('حفظ التسديد')");
+  await p.waitForFunction(() => document.body.textContent.includes("سُجّل التسديد"), null, { timeout: 15000 });
+  await p.waitForFunction(() => document.body.textContent.includes("100,000"), null, { timeout: 15000 }).catch(() => {});
+  ok("repayment lowers the remaining to 100,000 and the box is still unchanged", (await p.textContent("body")).includes("100,000") && (Number.isNaN(before) || (await balance()) === before));
+  ok("no console/page errors", errs.length === 0); if (errs.length) out.push("  " + errs.slice(0, 3).join(" | "));
+  console.log(out.join("\n")); await b.close();
+})().catch((e) => { console.log(globalThis.__out ? globalThis.__out.join("\n") : ""); console.error("SMOKE ERROR", e.message.split("\n").slice(0, 8).join("\n")); process.exit(1); });

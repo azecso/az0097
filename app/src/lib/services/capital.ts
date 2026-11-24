@@ -139,18 +139,3 @@ export async function reverseAdvance(tx: Tx, who: Principal, actor: Actor, id: s
   await audit(tx, actor, { action: "personal_advance.reverse", entityType: "personal_advance", entityId: id, reason });
   return { id, status: "REVERSED" };
 }
-
-// =========================== person-to-person debts: record only, outside the business books ===========================
-export const debtSchema = z.object({ person: z.string().min(2).max(120), direction: z.enum(["THEY_OWE_ME", "I_OWE_THEM"]), currency: currencyCode, amount: moneyStr, note: z.string().max(300).nullish() });
-export const listDebts = (tx: Tx) => tx`SELECT id, person, direction, currency, amount::text AS amount, paid::text AS paid, (amount - paid)::text AS remaining, note, created_at AS "createdAt" FROM personal_debts ORDER BY created_at DESC LIMIT 200`;
-export async function createDebt(tx: Tx, who: Principal, actor: Actor, i: z.infer<typeof debtSchema>) {
-  const [r] = await tx`INSERT INTO personal_debts(company_id, person, direction, currency, amount, note, created_by) VALUES (${who.companyId}, ${i.person}, ${i.direction}, ${i.currency}, ${i.amount}, ${i.note ?? null}, ${who.userId}) RETURNING id`;
-  await audit(tx, actor, { action: "personal_debt.create", entityType: "personal_debt", entityId: r!.id, after: i });
-  return r!;
-}
-export async function payDebt(tx: Tx, actor: Actor, id: string, amount: string) {
-  const [r] = await tx`UPDATE personal_debts SET paid = paid + ${amount} WHERE id = ${id} AND paid + ${amount} <= amount RETURNING id, paid::text AS paid`;
-  if (!r) throw conflict("OVER_PAYMENT", "المبلغ يتجاوز المتبقي أو السجل غير موجود");
-  await audit(tx, actor, { action: "personal_debt.pay", entityType: "personal_debt", entityId: id, after: { amount } });
-  return r;
-}
