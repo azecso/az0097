@@ -1,0 +1,27 @@
+const { chromium } = require("./pw.cjs");
+const BASE = process.env.E2E_BASE || "http://localhost:3100";
+(async () => {
+  const b = await chromium.launch(); const out = globalThis.__out = []; const ok = (n, c) => out.push((c ? "PASS " : "FAIL ") + n);
+  const p = await (await b.newContext({ viewport: { width: 1200, height: 900 } })).newPage(); const errs = [];
+  p.on("pageerror", (e) => errs.push(e.message)); p.on("console", (m) => { if (m.type() === "error" && !/status of 40[1349]/.test(m.text())) errs.push(m.text()); });
+  const call = (method, path, body) => p.evaluate(async ([method, path, body]) => { const me = await (await fetch("/api/auth/me")).json(); const r = await fetch(path, { method, headers: { "content-type": "application/json", "x-csrf-token": me.csrf }, body: body ? JSON.stringify(body) : undefined }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(JSON.stringify(j)); return j; }, [method, path, body]);
+  await p.goto(BASE + "/login"); await p.fill("#u", "owner"); await p.fill("#p", "Owner-Smoke-Pass-77"); await p.click("button.primary"); await p.waitForURL(BASE + "/");
+  const day = new Date().toISOString().slice(0, 10);
+  const cash = await p.evaluate(async () => (await (await fetch("/api/cash-accounts")).json())); const iqd = cash.find((a) => a.kind === "MAIN_CASH" && a.currency === "IQD").id;
+  const cap = await call("POST", "/api/capital", { kind: "INJECTION", docDate: day, cashAccountId: iqd, currency: "IQD", amount: "5000000", reason: "ابتدائي" }); await call("POST", `/api/capital/${cap.id}/approve`, {});
+  const bal = async () => Number((await call("GET", "/api/cash-accounts")).find((a) => a.id === iqd).balance ?? NaN);
+  await p.goto(BASE + "/projects"); await p.waitForSelector("#n"); await p.fill("#n", "مشروع الاختبار"); await p.click("button:has-text('إنشاء مشروع')");
+  await p.waitForURL(/\/projects\/[0-9a-f-]{36}$/); ok("project created and opened", (await p.textContent("h1")).includes("مشروع الاختبار"));
+  const before = await bal();
+  await p.fill("#pa", "300000"); await p.fill("#pn", "مواد البناء"); await p.setInputFiles("#pf", require("path").join(__dirname, "pixel.png")); await p.click("button:has-text('تسجيل الصرف')");
+  await p.waitForFunction(() => document.body.textContent.includes("تم الصرف وخُصم من الصندوق"), null, { timeout: 15000 });
+  ok("spend saved with a receipt photo shown on the row", (await p.locator("tbody img").count()) === 1 || (await p.locator("tbody a[href^='/api/attachments/']").count()) >= 1);
+  if (!Number.isNaN(before)) ok("the box dropped by 300,000 immediately", before - (await bal()) === 300000);
+  await p.click("button[role=tab]:has-text('استرجاع مبلغ')"); await p.fill("#pa", "50000"); await p.click("button:has-text('تسجيل الاسترجاع')");
+  await p.waitForFunction(() => document.body.textContent.includes("وعاد المبلغ للصندوق"), null, { timeout: 15000 });
+  const body = await p.textContent("body"); ok("totals show spent 300,000, refunded 50,000, net 250,000", body.includes("300,000") && body.includes("50,000") && body.includes("250,000"));
+  if (!Number.isNaN(before)) ok("the box shows the real balance after spend and refund (-250,000)", before - (await bal()) === 250000);
+  await p.goto(BASE + "/projects"); await p.waitForSelector("tbody td"); ok("projects list shows the net cost", (await p.textContent("tbody")).includes("250,000"));
+  ok("no console/page errors", errs.length === 0); if (errs.length) out.push("  " + errs.slice(0, 3).join(" | "));
+  console.log(out.join("\n")); await b.close();
+})().catch((e) => { console.log(globalThis.__out ? globalThis.__out.join("\n") : ""); console.error("SMOKE ERROR", e.message.split("\n").slice(0, 8).join("\n")); process.exit(1); });
