@@ -37,13 +37,22 @@ describe("owner 2FA (TOTP) as step-up for critical actions", () => {
     at(1);
     expect((await w.api(w.owner, w.R.capitalApprove, { method: "POST", params: { id: id2 }, body: { totp: code() } })).status).toBe(200);
   });
-  it("login requires the second factor once enabled; wrong codes count as failures", async () => {
-    at(1);
+  it("by default the login asks only for username and password even when 2FA is enrolled", async () => {
+    at(1); delete process.env.REQUIRE_LOGIN_2FA;
+    expect((await call(w.R.login, { method: "POST", body: { username: "owner", password: "Owner-Pass-2026-x1" } })).status).toBe(200);
+  });
+  it("login requires the second factor once enabled (REQUIRE_LOGIN_2FA=true); wrong codes count as failures", async () => {
+    at(1); process.env.REQUIRE_LOGIN_2FA = "true";
     const body = { username: "owner", password: "Owner-Pass-2026-x1" };
     expect((await call(w.R.login, { method: "POST", body })).body.error.code).toBe("TOTP_REQUIRED");
     expect((await call(w.R.login, { method: "POST", body: { ...body, totp: "111111" } })).status).toBe(401);
     expect((await call(w.R.login, { method: "POST", body: { ...body, totp: code() } })).status).toBe(200);
     expect((await call(w.R.login, { method: "POST", body: { ...body, totp: code() } })).status).toBe(401);          // same code twice
+  });
+  it("2FA can be disabled with the account password when the authenticator is not available; a wrong password is refused", async () => {
+    delete process.env.REQUIRE_LOGIN_2FA;
+    expect((await w.api(w.owner, w.R.totp.POST, { method: "POST", body: { action: "disable", password: "wrong-password-123" } })).body.error.code).toBe("INVALID_PASSWORD");
+    expect((await w.api(w.owner, w.R.totp.GET)).body.enabled).toBe(true);
   });
   it("the accountant is unaffected (no 2FA) and still cannot approve; disabling requires a valid code", async () => {
     expect((await w.api(w.acct, w.R.capitalApprove, { method: "POST", params: { id: await req("5") }, body: {} })).status).toBe(403);

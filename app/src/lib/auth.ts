@@ -33,7 +33,7 @@ export async function login(username: string, password: string, totp: string | u
     if (u && !locked) await db`SELECT auth_record_failure(${u.id}, ${MAX_FAILS}, ${LOCK_MINUTES})`;
     throw new AppError(401, "INVALID_CREDENTIALS", "بيانات الدخول غير صحيحة أو الحساب مقفل مؤقتاً");
   }
-  if (u.totp_enabled) {                         // password was right; now the second factor
+  if (u.totp_enabled && process.env.REQUIRE_LOGIN_2FA === "true") {          // the second factor at LOGIN is optional and OFF by default; set REQUIRE_LOGIN_2FA=true to require it. Sensitive owner actions still follow stepup.ts
     const step = totp ? verifyTotp(unseal(u.totp_secret_enc), totp) : null;
     if (!totp) throw new AppError(401, "TOTP_REQUIRED", "أدخل رمز المصادقة الثنائية");
     const used = step === null ? false : (await db`SELECT auth_totp_use(${u.id}, ${step}) AS ok`)[0]!.ok;

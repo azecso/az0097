@@ -4,12 +4,13 @@ import { badRequest, conflict } from "@/lib/errors";
 import { audit } from "@/lib/audit";
 import { newSecret, otpauthUri, seal, unseal, verifyTotp } from "@/lib/totp";
 import { requireStepUp } from "@/lib/stepup";
+import { verify } from "@node-rs/argon2";
 
 export const GET = secured({}, async ({ tx, principal }) => { const [u] = await tx`SELECT totp_enabled FROM users WHERE id = ${principal.userId}`; return { enabled: !!u?.totp_enabled, required: process.env.REQUIRE_OWNER_2FA !== "false" }; });
 
 /** POST {action:"setup"} -> new secret (not active yet); {action:"enable", code}; {action:"disable", code} */
 export const POST = secured({}, async ({ tx, principal, actor, req }) => {
-  const b = parse(z.object({ action: z.enum(["setup", "enable", "disable"]), code: z.string().max(10).optional() }), await req.json());
+  const b = parse(z.object({ action: z.enum(["setup", "enable", "disable"]), code: z.string().max(10).optional(), password: z.string().max(256).optional() }), await req.json());
   const [u] = await tx`SELECT totp_enabled, totp_secret_enc FROM users WHERE id = ${principal.userId} FOR UPDATE`;
   if (b.action === "setup") {
     if (u!.totp_enabled) throw conflict("ALREADY_ENABLED");
@@ -26,7 +27,10 @@ export const POST = secured({}, async ({ tx, principal, actor, req }) => {
     await audit(tx, actor, { action: "auth.totp_enabled", entityType: "user", entityId: principal.userId });
     return { enabled: true };
   }
-  await requireStepUp(tx, principal, b.code);                         // disabling needs a valid current code
+  if (b.password) {                                                    // alternative to the code: the account password (e.g. the authenticator app is lost)
+    const [pw] = await tx`SELECT password_hash FROM users WHERE id = ${principal.userId}`;
+    if (!pw || !(await verify(pw.password_hash as string, b.password).catch(() => false))) throw badRequest("INVALID_PASSWORD", "كلمة المرور غير صحيحة");
+  } else await requireStepUp(tx, principal, b.code);                  // otherwise disabling needs a valid current code
   await tx`UPDATE users SET totp_enabled = false, totp_secret_enc = NULL, totp_last_step = NULL WHERE id = ${principal.userId}`;
   await audit(tx, actor, { action: "auth.totp_disabled", entityType: "user", entityId: principal.userId });
   return { enabled: false };
